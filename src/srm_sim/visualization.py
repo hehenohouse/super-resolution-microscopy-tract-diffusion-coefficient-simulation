@@ -46,7 +46,12 @@ def save_animation(
         for spine in axis.spines.values():
             spine.set_color("#38445a")
 
-    truth_axis.set_title("Ground truth", color="white")
+    truth_title = "Ground truth inside observation window"
+    if result.scenario.observation.input_dimension != (
+        result.scenario.observation.output_dimension
+    ):
+        truth_title = "Ground truth in observation volume (XY projection)"
+    truth_axis.set_title(truth_title, color="white")
     observed_axis.set_title("Observation available to tracking", color="white")
 
     empty = np.empty((0, 2), dtype=np.float64)
@@ -57,7 +62,7 @@ def save_animation(
         c="#64748b",
         alpha=0.42,
         linewidths=0,
-        label="active, non-emitting",
+        label="in FOV, non-emitting",
     )
     truth_emitting = truth_axis.scatter(
         [],
@@ -66,7 +71,7 @@ def save_animation(
         c="#4de3ff",
         alpha=0.95,
         linewidths=0,
-        label="emitting",
+        label="in FOV, emitting",
     )
     observed_glow = observed_axis.scatter(
         [], [], s=105, c="#4de3ff", alpha=0.14, linewidths=0
@@ -81,21 +86,31 @@ def save_animation(
         labelcolor="white",
     )
 
-    status_text = figure.suptitle("", color="white", fontsize=11)
+    status_text = figure.suptitle("", color="white", fontsize=10)
 
     def update(frame: int):
         frame_positions = result.positions_um[frame]
+        truth_positions = result.scenario.observation.project_positions(
+            frame_positions
+        )
         frame_emitting = result.emitting[frame]
         frame_active = result.active[frame]
+        frame_in_region = result.in_observation_region[frame]
         frame_visible = result.visible[frame]
-        non_emitting = frame_active & ~frame_emitting
+        emitting_in_region = frame_active & frame_in_region & frame_emitting
+        non_emitting_in_region = frame_active & frame_in_region & ~frame_emitting
+        outside_active = frame_active & ~frame_in_region
         inactive = ~frame_active
 
         truth_non_emitting.set_offsets(
-            frame_positions[non_emitting] if np.any(non_emitting) else empty
+            truth_positions[non_emitting_in_region]
+            if np.any(non_emitting_in_region)
+            else empty
         )
         truth_emitting.set_offsets(
-            frame_positions[frame_emitting] if np.any(frame_emitting) else empty
+            truth_positions[emitting_in_region]
+            if np.any(emitting_in_region)
+            else empty
         )
         observed_frame = result.observed_positions_um[frame]
         visible_positions = (
@@ -104,10 +119,11 @@ def save_animation(
         observed_glow.set_offsets(visible_positions)
         observed_points.set_offsets(visible_positions)
         status_text.set_text(
-            f"{result.scenario.scenario_id}   |   "
+            f"{result.scenario.scenario_id}\n"
             f"t = {result.time_s[frame]:.2f} s   |   "
-            f"emitting {frame_emitting.sum()}   "
-            f"non-emitting {non_emitting.sum()}   "
+            f"in-FOV emitting {emitting_in_region.sum()}   "
+            f"non-emitting {non_emitting_in_region.sum()}   "
+            f"outside {outside_active.sum()}   "
             f"inactive {inactive.sum()}   visible {frame_visible.sum()}"
         )
         return (

@@ -35,6 +35,7 @@ class SimulationResult:
     states: NDArray[np.uint8]
     emitting: NDArray[np.bool_]
     active: NDArray[np.bool_]
+    in_observation_region: NDArray[np.bool_]
     observed_positions_um: NDArray[np.float64]
     visible: NDArray[np.bool_]
 
@@ -53,13 +54,15 @@ def simulate(
     observation_rng = np.random.default_rng(observation_seed)
 
     shape = (config.n_frames, config.n_particles)
-    position_shape = (*shape, scenario.motion.dimension)
+    physical_position_shape = (*shape, scenario.motion.dimension)
+    observed_position_shape = (*shape, scenario.observation.output_dimension)
 
-    positions = np.empty(position_shape, dtype=np.float64)
+    positions = np.empty(physical_position_shape, dtype=np.float64)
     states = np.empty(shape, dtype=np.uint8)
     emitting = np.empty(shape, dtype=np.bool_)
     active = np.empty(shape, dtype=np.bool_)
-    observed_positions = np.empty(position_shape, dtype=np.float64)
+    in_observation_region = np.empty(shape, dtype=np.bool_)
+    observed_positions = np.empty(observed_position_shape, dtype=np.float64)
     visible = np.empty(shape, dtype=np.bool_)
 
     positions[0] = scenario.boundary.sample_initial_positions(
@@ -70,6 +73,9 @@ def simulate(
     )
     emitting[0] = scenario.photophysics.emitting_mask(states[0])
     active[0] = scenario.photophysics.active_mask(states[0])
+    in_observation_region[0] = scenario.observation.in_observation_region(
+        positions[0]
+    )
     observed_positions[0], visible[0] = scenario.observation.observe(
         positions[0], emitting[0], observation_rng
     )
@@ -88,6 +94,9 @@ def simulate(
         )
         emitting[frame] = scenario.photophysics.emitting_mask(states[frame])
         active[frame] = scenario.photophysics.active_mask(states[frame])
+        in_observation_region[frame] = (
+            scenario.observation.in_observation_region(positions[frame])
+        )
         observed_positions[frame], visible[frame] = scenario.observation.observe(
             positions[frame], emitting[frame], observation_rng
         )
@@ -98,11 +107,12 @@ def simulate(
         time_s=np.arange(config.n_frames, dtype=np.float64)
         * config.frame_interval_s,
         particle_ids=np.arange(config.n_particles, dtype=np.int64),
-        bounds_um=scenario.boundary.bounds_um.copy(),
+        bounds_um=scenario.observation.bounds_um.copy(),
         positions_um=positions,
         states=states,
         emitting=emitting,
         active=active,
+        in_observation_region=in_observation_region,
         observed_positions_um=observed_positions,
         visible=visible,
     )

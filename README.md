@@ -1,8 +1,8 @@
 # SRM Tracking Simulation Framework
 
-A modular simulation framework for constructing controlled super-resolution microscopy (SRM) particle-tracking experiments.
+A modular framework for constructing controlled super-resolution microscopy (SRM) particle-tracking simulations.
 
-The project is not a single physical model. Each simulation **scenario** is composed from four independent model types:
+The project is not a single physical model. Each simulation **scenario** combines four independent components:
 
 ```text
 motion model
@@ -12,210 +12,156 @@ motion model
     = simulation scenario
 ```
 
-The repository currently contains one minimal baseline scenario. It does not yet contain a tracking algorithm or tracking evaluation metrics.
+Three scenarios are currently included:
+
+1. A default 3D free-diffusion benchmark observed through a finite axial slab and projected to 2D.
+2. A reflecting 2D baseline for confinement and tracking experiments.
+3. A free-diffusion 2D benchmark for testing diffusion-coefficient recovery without a reflecting wall.
+
+The repository does not yet contain a tracking algorithm or tracking evaluation metrics.
 
 ## Quick start
 
-The project requires Python 3.11 or newer. A local virtual environment already exists at `.venv`.
+The project requires Python 3.11 or newer.
 
-Install the project in Windows PowerShell:
+Install it in Windows PowerShell:
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m pip install -e .
 ```
 
-Run the baseline simulation:
+Run the default 3D-to-2D benchmark:
 
 ```powershell
 & ".\.venv\Scripts\python.exe" main.py
 ```
 
-The command generates three files:
+Run either retained 2D scenario explicitly:
+
+```powershell
+& ".\.venv\Scripts\python.exe" main.py --scenario reflecting
+& ".\.venv\Scripts\python.exe" main.py --scenario free
+```
+
+Skip GIF generation during faster numerical runs:
+
+```powershell
+& ".\.venv\Scripts\python.exe" main.py --no-animation
+```
+
+Running without `--scenario` selects the 3D-to-2D benchmark.
+
+Each scenario writes to its own directory:
 
 ```text
-outputs/observations.npz
-outputs/ground_truth.npz
-outputs/simulation_preview.gif
+outputs/<scenario_id>/observations.npz
+outputs/<scenario_id>/ground_truth.npz
+outputs/<scenario_id>/simulation_preview.gif
 ```
 
-## Output trust boundary
+## Scenario summary
 
-The output is deliberately separated into public tracking input and private evaluation data.
+| Property | Default projected 3D benchmark | Reflecting 2D baseline | Free-diffusion 2D benchmark |
+|---|---|---|---|
+| Scenario ID | `free_diffusion_benchmark_3d_to_2d_axial_slab_markov` | `reflecting_baseline_2d_brownian_markov` | `free_diffusion_benchmark_2d_brownian_markov` |
+| Physical motion | 3D Brownian motion | 2D Brownian motion | 2D Brownian motion |
+| Physical boundary | None; unbounded space | Reflecting 10 x 10 um square | None; unbounded plane |
+| Initial reservoir | 30 x 30 x 22 um | 10 x 10 um | 30 x 30 um |
+| Observation region | Central 10 x 10 x 2 um volume | 10 x 10 um window | Central 10 x 10 um window |
+| Public coordinates | 2D XY projection | 2D XY | 2D XY |
+| Number of particles | 5,000 | 100 | 900 |
+| Diffusion coefficient | 0.5 um^2/s | 0.5 um^2/s | 0.5 um^2/s |
+| Intended use | Axial entry/exit and projected tracking | Confinement and wall-sensitive tracking | Free-diffusion coefficient recovery |
 
-### Tracking input: `observations.npz`
+All three scenarios use 200 frames, a frame interval of 0.05 s, identical three-state Markov photophysics, ideal localization, and reproducible random seeds.
 
-A tracking method may read this file. It contains only visible localization detections:
-
-```text
-detection_id
-frame_index
-time_s
-observed position
-```
-
-It does not contain true particle IDs, hidden states, dark-molecule positions, complete trajectories, or a persistent particle-slot axis. Detection order is shuffled independently within each frame, so array order cannot be used as an identity shortcut.
-
-### Private evaluation data: `ground_truth.npz`
-
-Do not give this file to a tracking method. It contains the complete simulated trajectories, photophysical states, and the hidden mapping from each `detection_id` to its true `particle_id`.
-
-A future evaluator can use this file after tracking has finished to compare predicted tracks with the hidden identities.
-
-### Visualization: `simulation_preview.gif`
-
-The GIF is for human inspection only. It is not intended as machine input. The left panel shows ground truth, while the right panel shows the observations available to a tracker.
-
-## Consuming observations from another Python program
-
-The safest interface is `load_observations`. It opens only the public observation file.
-
-```python
-from srm_sim import load_observations
-
-observations = load_observations("outputs/observations.npz")
-
-for frame_index in range(observations.n_frames):
-    detection_ids, bright_spots_um = observations.for_frame(frame_index)
-
-    # bright_spots_um has shape (n_visible_in_frame, dimensions).
-    # Pass detection_ids and bright_spots_um to a tracking method.
-    print(frame_index, detection_ids.shape, bright_spots_um.shape)
-```
-
-For the current two-dimensional baseline, each row of `bright_spots_um` is:
-
-```text
-[x_um, y_um]
-```
-
-A tracker can return an assignment such as:
-
-```text
-detection_id, predicted_track_id
-0,            12
-1,            31
-2,            7
-3,            12
-```
-
-The tracker creates `predicted_track_id`. It must not have access to the true `particle_id`.
-
-### Loading without importing this package
-
-A separate program can also use NumPy directly:
-
-```python
-import numpy as np
-
-with np.load("outputs/observations.npz", allow_pickle=False) as data:
-    detection_ids = data["detection_ids"]
-    frame_indices = data["frame_indices"]
-    times_s = data["times_s"]
-    positions_um = data["positions_um"]
-    n_frames = int(data["n_frames"])
-
-for frame_index in range(n_frames):
-    in_frame = frame_indices == frame_index
-    frame_detection_ids = detection_ids[in_frame]
-    frame_bright_spots_um = positions_um[in_frame]
-```
-
-## Observation file schema
-
-`observations.npz` contains the following tracking-safe fields:
-
-| Field | Shape | Meaning |
-|---|---|---|
-| `format_version` | scalar string | Observation-file format version |
-| `scenario_id` | scalar string | Stable scenario identifier |
-| `observation_model` | scalar string | Observation component identifier |
-| `position_unit` | scalar string | `um` |
-| `time_unit` | scalar string | `s` |
-| `n_frames` | scalar integer | Total number of frames, including empty frames |
-| `frame_interval_s` | scalar float | Time between frames |
-| `frame_times_s` | `(n_frames,)` | Complete frame time axis |
-| `bounds_um` | `(dimensions, 2)` | Lower and upper spatial bounds |
-| `detection_order_seed` | scalar integer | Seed used only to randomize within-frame order |
-| `detection_ids` | `(n_detections,)` | Unique arbitrary detection identifiers |
-| `frame_indices` | `(n_detections,)` | Frame containing each detection |
-| `times_s` | `(n_detections,)` | Time of each detection |
-| `positions_um` | `(n_detections, dimensions)` | Observed bright-spot coordinates |
-
-The table is flat rather than `(frame, particle, xy)`. Consequently, no column remains associated with the same true molecule across frames.
-
-## Private ground-truth schema
-
-`ground_truth.npz` contains evaluation-only data:
-
-| Field | Meaning |
-|---|---|
-| `scenario_json` | All component names and physical parameters |
-| `config_json` | Particle count, frame count, time step, and random seed |
-| `particle_ids` | Stable true molecule identities |
-| `positions_um` | Complete true trajectories, including invisible molecules |
-| `states` | Internal photophysics states |
-| `emitting` | True emitting state |
-| `active` | Whether a molecule has not permanently deactivated |
-| `detection_ids` | The same arbitrary detection IDs used publicly |
-| `detection_frame_indices` | Frame of each detection |
-| `detection_particle_ids` | Hidden true identity for each detection |
-| `detection_true_positions_um` | Hidden true position associated with each detection |
-
-This separation prevents accidental identity leakage while preserving everything required for future evaluation.
-
-## Framework components
-
-### Motion model
-
-Controls true particle motion, such as Brownian, directed, confined, or anomalous diffusion.
-
-Current component:
-
-```text
-homogeneous_brownian_motion_2d
-```
-
-### Boundary model
-
-Controls what happens when a particle reaches the simulated domain boundary, such as reflecting, periodic, or absorbing behavior.
-
-Current component:
-
-```text
-reflecting_square_boundary_2d
-```
-
-### Photophysics model
-
-Controls emitting, non-emitting, and permanent deactivation states.
-
-Current component:
-
-```text
-three_state_markov_blinking_with_bleaching
-```
-
-### Observation model
-
-Transforms hidden ground truth into the detections available to a tracking method. Future observation models can add localization error, missed detections, PSF rendering, photon noise, or camera noise without changing the underlying motion.
-
-Current component:
-
-```text
-ideal_emitter_localization
-```
-
-## Baseline A
+## Default projected 3D benchmark
 
 Stable scenario ID:
 
 ```text
-baseline_ideal_2d_brownian_markov
+free_diffusion_benchmark_3d_to_2d_axial_slab_markov
+```
+
+Composition:
+
+```text
+Motion:       BrownianMotion3D
+Boundary:     UnboundedSpace3D
+Photophysics: ThreeStateMarkovBlinking
+Observation:  IdealAxialSlabProjectionObservation
+```
+
+The private physical state is three-dimensional. Five thousand particles are initialized uniformly in
+
+$$
+0\leq x\leq30,
+\qquad
+0\leq y\leq30,
+\qquad
+0\leq z\leq22
+$$
+
+and then diffuse without reflection, wrapping, or clipping. The initialization cuboid is not a physical boundary.
+
+A molecule can be detected only while it is ON and inside the central observation volume
+
+$$
+10\leq x\leq20,
+\qquad
+10\leq y\leq20,
+\qquad
+10\leq z\leq12.
+$$
+
+The observation model discards the axial coordinate and publishes only
+
+$$
+(x,y,z)\longmapsto(x,y).
+$$
+
+For isotropic 3D Brownian motion,
+
+$$
+\Delta x,\Delta y,\Delta z
+\sim\mathcal{N}\!\left(0,2D\Delta t\right),
+$$
+
+so the full physical displacement obeys
+
+$$
+\mathbb{E}\!\left[\Delta x^2+\Delta y^2+\Delta z^2\right]
+=6D\Delta t.
+$$
+
+After ideal XY projection, the public displacement still obeys
+
+$$
+\mathbb{E}\!\left[\Delta x^2+\Delta y^2\right]
+=4D\Delta t.
+$$
+
+Therefore an XY estimator can still recover the same isotropic diffusion coefficient $D$. The practical difference from native 2D motion is trajectory censoring: an emitting molecule disappears when it leaves the axial slab and can reappear after returning, even if its photophysical state never changed.
+
+The observation volume has 10 um of initialization padding on every face. For the default experiment, the one-coordinate 10 s displacement scale is
+
+$$
+\sqrt{2Dt}=\sqrt{10}\approx3.16\;\mu\mathrm{m},
+$$
+
+so the padding limits finite-reservoir depletion near the observation volume without introducing a wall.
+
+## Reflecting baseline
+
+Stable scenario ID:
+
+```text
+reflecting_baseline_2d_brownian_markov
 ```
 
 Full name:
 
-**Baseline A - Ideal 2D Reflecting Brownian Motion with Three-State Markov Photophysics**
+**Reflecting Baseline - Ideal 2D Brownian Motion in a Reflecting Square with Three-State Markov Photophysics**
 
 Composition:
 
@@ -223,68 +169,110 @@ Composition:
 Motion:       BrownianMotion2D
 Boundary:     ReflectingSquareBoundary
 Photophysics: ThreeStateMarkovBlinking
-Observation:  IdealOnStateObservation
+Observation:  IdealOnStateObservation over [0, 10] x [0, 10] um
 ```
 
-### Default conditions
-
-Frequently adjusted values are kept together in `main.py`.
-
-| Parameter | Default | Unit or meaning |
-|---|---:|---|
-| `n_particles` | 100 | Molecules |
-| `n_frames` | 200 | Frames |
-| `frame_interval_s` | 0.05 | Seconds per frame (20 fps) |
-| `field_size_um` | 10.0 | Square field side length in um |
-| `diffusion_coefficient_um2_s` | 0.5 | um^2/s |
-| `initial_on_fraction` | 0.2 | Initially emitting fraction |
-| `k_on_s` | 1.0 | `OFF -> ON`, 1/s |
-| `k_off_s` | 2.0 | `ON -> OFF`, 1/s |
-| `k_bleach_s` | 0.08 | `ON -> BLEACHED`, 1/s |
-| `random_seed` | 7 | Reproducible simulation seed |
-| `detection_order_seed` | 17 | Reproducible within-frame shuffle seed |
-
-These values are transparent baseline conditions, not parameters fitted to a particular fluorophore.
-
-### Brownian-motion assumption
-
-For a homogeneous two-dimensional Brownian process with diffusion coefficient $D$ and frame interval $\Delta t$, each coordinate increment is sampled independently:
-
-$$
-\Delta x, \Delta y \sim \mathcal{N}\!\left(0, 2D\Delta t\right).
-$$
-
-Equivalently, the standard deviation of one coordinate step is
-
-$$
-\sigma_{\mathrm{step}} = \sqrt{2D\Delta t}.
-$$
-
-The expected squared two-dimensional displacement over one frame is
-
-$$
-\mathbb{E}\!\left[\lVert\Delta\mathbf{r}\rVert^2\right]
-= 4D\Delta t.
-$$
-
-For the current defaults, $D=0.5\;\mu\mathrm{m}^2/\mathrm{s}$ and $\Delta t=0.05\;\mathrm{s}$, giving
-
-$$
-\sigma_{\mathrm{step}} \approx 0.224\;\mu\mathrm{m}
-$$
-
-per coordinate and a two-dimensional RMS displacement of approximately $0.316\;\mu\mathrm{m}$ per frame.
-
-All particles move independently and share one diffusion coefficient. The boundary is reflecting. For a square domain $[0,L]$, each coordinate is mapped back into the field using
+All particles begin inside the 10 x 10 um square. A coordinate that crosses a wall is reflected back into the square. For a one-dimensional interval from 0 to $L$, the mapping is
 
 $$
 x_{\mathrm{reflected}}
-= L - \left|\left(x \bmod 2L\right)-L\right|.
+= L-\left|\left(x\bmod 2L\right)-L\right|.
 $$
 
-OFF and BLEACHED molecules continue to have simulated true positions, but the observation model cannot see them.
+This scenario is useful when wall interactions or confined trajectories are part of the benchmark. It should not be treated as unlimited free diffusion at long lag times.
 
-### Photophysics assumption
+For two independent uniformly distributed positions in a reflecting square, the long-lag two-dimensional MSD approaches
+
+$$
+\mathrm{MSD}_{\infty}=\frac{L^2}{3}.
+$$
+
+For $L=10\;\mu\mathrm{m}$, this plateau is approximately
+
+$$
+\mathrm{MSD}_{\infty}\approx33.3\;\mu\mathrm{m}^2.
+$$
+
+Fitting the free-diffusion relation over lags affected by this plateau will generally underestimate $D$.
+
+## Free-diffusion benchmark
+
+Stable scenario ID:
+
+```text
+free_diffusion_benchmark_2d_brownian_markov
+```
+
+Full name:
+
+**Free-Diffusion Benchmark - Unbounded 2D Brownian Motion with a Finite Observation Window and Three-State Markov Photophysics**
+
+Composition:
+
+```text
+Motion:       BrownianMotion2D
+Boundary:     UnboundedPlane2D
+Photophysics: ThreeStateMarkovBlinking
+Observation:  IdealOnStateObservation over [10, 20] x [10, 20] um
+```
+
+The benchmark initializes 900 particles uniformly in a 30 x 30 um reservoir. After initialization, particle positions are never reflected, wrapped, clipped, or otherwise corrected. A particle can move beyond the initial reservoir and continues on the unbounded plane.
+
+Only the central window is observed:
+
+$$
+10\leq x\leq20,
+\qquad
+10\leq y\leq20.
+$$
+
+A molecule produces a detection only when it is both ON and inside this field of view. Molecules can naturally enter and leave the observation window.
+
+The initial reservoir has 10 um of padding between each side of the observation window and the reservoir edge. This reduces reservoir-edge depletion during the 10 s default experiment. It does not create a physical wall.
+
+The free scenario uses 900 particles because
+
+$$
+\frac{900}{30\times30}
+=
+\frac{100}{10\times10}
+=1\;\text{molecule}/\mu\mathrm{m}^2.
+$$
+
+Thus, the two 2D scenarios begin with the same areal density.
+
+### Why this benchmark is preferred for recovering D
+
+For homogeneous free Brownian motion in two dimensions,
+
+$$
+\Delta x,\Delta y
+\sim
+\mathcal{N}\!\left(0,2D\Delta t\right),
+$$
+
+and
+
+$$
+\mathbb{E}\!\left[\lVert\Delta\mathbf{r}\rVert^2\right]
+=4D\Delta t.
+$$
+
+A one-frame ground-truth estimator is therefore
+
+$$
+\widehat{D}
+=
+\frac{1}{4N\Delta t}
+\sum_{j=1}^{N}
+\left\lVert\Delta\mathbf{r}_j\right\rVert^2.
+$$
+
+Unlike reflection, crossing the finite field-of-view boundary does not alter a physical displacement. The finite window still introduces trajectory censoring: tracks begin when a molecule enters the window and end when it leaves. Tracking and diffusion estimators should account for that selection effect, but there is no artificial bounce at the image edge.
+
+## Shared photophysics
+
+All three scenarios use the same three-state model:
 
 ```text
 OFF  --k_on--> ON
@@ -296,12 +284,12 @@ BLEACHED --no transition--> BLEACHED
 For a transition with constant rate $k$, the waiting time is exponentially distributed:
 
 $$
-T \sim \mathrm{Exp}(k),
+T\sim\mathrm{Exp}(k),
 \qquad
 P(T>t)=e^{-kt}.
 $$
 
-The corresponding transition probability during one frame is
+The event probability during one frame is
 
 $$
 p(\Delta t)=1-e^{-k\Delta t}.
@@ -310,30 +298,31 @@ $$
 For an OFF molecule,
 
 $$
-T_{\mathrm{off}} \sim \mathrm{Exp}(k_{\mathrm{on}}),
+T_{\mathrm{off}}\sim\mathrm{Exp}(k_{\mathrm{on}}),
 \qquad
 \mathbb{E}[T_{\mathrm{off}}]=\frac{1}{k_{\mathrm{on}}}.
 $$
 
-Temporary darkening and permanent bleaching are competing events while a molecule is ON. Therefore,
+For an ON molecule, temporary darkening and irreversible bleaching are competing events:
 
 $$
 T_{\mathrm{on}}
-\sim \mathrm{Exp}(k_{\mathrm{off}}+k_{\mathrm{bleach}}),
+\sim
+\mathrm{Exp}(k_{\mathrm{off}}+k_{\mathrm{bleach}}),
 $$
-
-with mean duration
 
 $$
 \mathbb{E}[T_{\mathrm{on}}]
-= \frac{1}{k_{\mathrm{off}}+k_{\mathrm{bleach}}}.
+=
+\frac{1}{k_{\mathrm{off}}+k_{\mathrm{bleach}}}.
 $$
 
-When an ON period ends, the event probabilities are
+When an ON period ends,
 
 $$
 P(\mathrm{ON}\rightarrow\mathrm{OFF})
-= \frac{k_{\mathrm{off}}}
+=
+\frac{k_{\mathrm{off}}}
 {k_{\mathrm{off}}+k_{\mathrm{bleach}}},
 $$
 
@@ -341,56 +330,137 @@ and
 
 $$
 P(\mathrm{ON}\rightarrow\mathrm{BLEACHED})
-= \frac{k_{\mathrm{bleach}}}
+=
+\frac{k_{\mathrm{bleach}}}
 {k_{\mathrm{off}}+k_{\mathrm{bleach}}}.
 $$
 
-BLEACHED is an absorbing state, so
+The default parameters are
+
+| Parameter | Value |
+|---|---:|
+| Initial ON fraction | 0.2 |
+| $k_{\mathrm{on}}$ | 1.0 1/s |
+| $k_{\mathrm{off}}$ | 2.0 1/s |
+| $k_{\mathrm{bleach}}$ | 0.08 1/s |
+
+BLEACHED is an absorbing state:
 
 $$
 P(S_{t+\Delta t}=\mathrm{BLEACHED}\mid S_t=\mathrm{BLEACHED})=1.
 $$
 
-### Ideal-observation assumption
+## Ideal observation model
 
-The ideal observation rule is
+The current observation component reports an exact localization only when a molecule is ON and inside the configured field of view.
+
+For a molecule inside the field of view,
 
 $$
-\mathbf{y}_{i,t}=
-\begin{cases}
-\mathbf{x}_{i,t}, & S_{i,t}=\mathrm{ON},\
-\varnothing, & S_{i,t}\neq\mathrm{ON},
-\end{cases}
+\mathbf{y}_{i,t}=\mathbf{x}_{i,t}
+\quad\text{when}\quad
+S_{i,t}=\mathrm{ON}.
 $$
 
-where $\mathbf{x}_{i,t}$ is the true position and $\mathbf{y}_{i,t}$ is the reported detection. The current public output is therefore a localization table, not a realistic camera image. It does not contain a PSF, pixels, photon noise, background fluorescence, localization error, or motion blur.
+Otherwise, no detection is emitted:
 
-## Localization tracking versus image tracking
+$$
+\mathbf{y}_{i,t}=\varnothing.
+$$
 
-The current `observations.npz` is appropriate for tracking methods that accept per-frame localization coordinates, including nearest-neighbor linking, assignment methods, Kalman filters, probabilistic association, gap closing, and graph-based tracking.
+The public output is therefore a localization table, not a camera image. It does not yet contain a point-spread function, pixels, photon noise, background fluorescence, localization uncertainty, or motion blur.
 
-It is not yet suitable for methods that begin with raw microscopy images. Those methods require a future image-formation pipeline:
+## Output trust boundary
+
+Each scenario separates tracking input from evaluation-only data.
+
+### Public tracking input: `observations.npz`
+
+A tracking method may read this file. It contains only visible detections:
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `scenario_id` | scalar string | Stable scenario identifier |
+| `observation_model` | scalar string | Observation component identifier |
+| `n_frames` | scalar integer | Total number of frames |
+| `frame_interval_s` | scalar float | Time between frames |
+| `frame_times_s` | `(n_frames,)` | Complete frame time axis |
+| `bounds_um` | `(observation_dimensions, 2)` | Public observation-coordinate bounds |
+| `detection_ids` | `(n_detections,)` | Unique arbitrary detection IDs |
+| `frame_indices` | `(n_detections,)` | Frame containing each detection |
+| `times_s` | `(n_detections,)` | Detection times |
+| `positions_um` | `(n_detections, observation_dimensions)` | Observed bright-spot coordinates |
+
+It does not contain true particle IDs, hidden states, invisible positions, complete trajectories, motion parameters, axial coordinates, or a persistent particle-slot axis. Detection order is shuffled independently within every frame. The projected 3D scenario therefore still exposes only two columns: x and y.
+
+### Private evaluation data: `ground_truth.npz`
+
+Do not give this file to a tracking method. It contains:
+
+- Complete true trajectories and stable particle IDs, including XYZ coordinates for the projected 3D scenario.
+- Internal photophysics states.
+- Emitting, active, and in-observation-region masks.
+- Complete scenario and configuration metadata.
+- The hidden `detection_id -> true_particle_id` mapping.
+
+A future evaluator can compare a tracker's predicted identities with this hidden mapping.
+
+### Visualization: `simulation_preview.gif`
+
+The GIF is for human inspection only. The left panel shows ground truth inside the complete observation region; 3D truth is projected onto XY for display. The right panel shows only the XY detections available to tracking.
+
+## Consuming observations from another Python program
+
+Use `load_observations` and open only the public file:
+
+```python
+from srm_sim import load_observations
+
+observations = load_observations(
+    "outputs/free_diffusion_benchmark_3d_to_2d_axial_slab_markov/observations.npz"
+)
+
+for frame_index in range(observations.n_frames):
+    detection_ids, bright_spots_um = observations.for_frame(frame_index)
+
+    # bright_spots_um has shape (n_visible_in_frame, 2).
+    # Pass only these IDs and coordinates to the tracking method.
+    print(frame_index, detection_ids.shape, bright_spots_um.shape)
+```
+
+A tracker should return an assignment such as
 
 ```text
-emitter coordinates
-    -> PSF rendering
-    -> camera pixels
-    -> photon and background noise
-    -> image stack
+detection_id, predicted_track_id
+0,            12
+1,            31
+2,            7
+3,            12
 ```
+
+The tracker creates `predicted_track_id`. It must never receive the true `particle_id`.
+
+## Framework layout
+
+- `src/srm_sim/models/motion.py`: motion components.
+- `src/srm_sim/models/boundary.py`: reflecting and unbounded physical domains.
+- `src/srm_sim/models/photophysics.py`: blinking and bleaching.
+- `src/srm_sim/models/observation.py`: finite observation windows and localization output.
+- `src/srm_sim/scenarios/`: scientifically meaningful component combinations.
+- `src/srm_sim/simulator.py`: generic scenario orchestration.
+- `src/srm_sim/export.py`: tracking-safe public export and private truth export.
+- `src/srm_sim/visualization.py`: human-facing animation.
 
 ## Adding future models
 
-Prefer adding one reusable component and composing it with existing components rather than copying the entire simulator. For example:
+Prefer adding reusable components and composing them into scenarios instead of copying the simulator. Examples include:
 
 ```text
 BrownianMotion2D
-+ ReflectingSquareBoundary
++ UnboundedPlane2D
 + ThreeStateMarkovBlinking
 + GaussianLocalizationObservation
 ```
-
-or:
 
 ```text
 ConfinedDiffusion2D
@@ -399,16 +469,14 @@ ConfinedDiffusion2D
 + PhotonCameraObservation
 ```
 
-Register a new scenario in `src/srm_sim/scenarios/` when a scientifically meaningful combination needs to be run repeatedly.
-
 ## Not included yet
 
 - Tracking algorithms and evaluation metrics
-- Microscope PSF and camera pixels
+- Point-spread function and camera pixels
 - Photon and camera noise
 - Background fluorescence
 - Localization uncertainty
 - Motion blur
 - Missed detections and false positives
 - Multiple diffusion populations
-- Confinement, directed motion, anomalous diffusion, or 3D motion
+- Directed motion, anomalous diffusion, or direct 3D localization

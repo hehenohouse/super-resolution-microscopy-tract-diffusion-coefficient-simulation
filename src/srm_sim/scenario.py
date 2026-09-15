@@ -66,6 +66,19 @@ class PhotophysicsModel(Protocol):
 
 class ObservationModel(Protocol):
     model_id: str
+    input_dimension: int
+    output_dimension: int
+
+    @property
+    def bounds_um(self) -> NDArray[np.float64]: ...
+
+    def in_observation_region(
+        self, positions_um: NDArray[np.float64]
+    ) -> NDArray[np.bool_]: ...
+
+    def project_positions(
+        self, positions_um: NDArray[np.float64]
+    ) -> NDArray[np.float64]: ...
 
     def observe(
         self,
@@ -89,13 +102,29 @@ class SimulationScenario:
     def __post_init__(self) -> None:
         if not self.scenario_id:
             raise ValueError("scenario_id cannot be empty")
-        if self.motion.dimension != self.boundary.dimension:
-            raise ValueError("motion and boundary dimensions must match")
+        physical_dimensions = {
+            self.motion.dimension,
+            self.boundary.dimension,
+            self.observation.input_dimension,
+        }
+        if len(physical_dimensions) != 1:
+            raise ValueError(
+                "motion, boundary, and observation input dimensions must match"
+            )
+        if self.observation.output_dimension <= 0:
+            raise ValueError("observation output dimension must be positive")
+        if self.observation.bounds_um.shape != (
+            self.observation.output_dimension,
+            2,
+        ):
+            raise ValueError("observation bounds do not match its output dimension")
 
     def metadata(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
             "scenario_name": self.name,
+            "physical_dimension": self.motion.dimension,
+            "observation_dimension": self.observation.output_dimension,
             "components": {
                 "motion": {
                     "model_id": self.motion.model_id,

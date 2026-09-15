@@ -9,14 +9,14 @@ from srm_sim.models import (
 from srm_sim.scenario import SimulationScenario
 
 
-BASELINE_SCENARIO_ID = "baseline_ideal_2d_brownian_markov"
-BASELINE_SCENARIO_NAME = (
-    "Baseline A - Ideal 2D Reflecting Brownian Motion with "
-    "Three-State Markov Photophysics"
+REFLECTING_BASELINE_ID = "reflecting_baseline_2d_brownian_markov"
+REFLECTING_BASELINE_NAME = (
+    "Reflecting Baseline - Ideal 2D Brownian Motion in a Reflecting Square "
+    "with Three-State Markov Photophysics"
 )
 
 
-def create_baseline_scenario(
+def create_reflecting_baseline(
     *,
     diffusion_coefficient_um2_s: float = 0.5,
     field_size_um: float = 10.0,
@@ -25,18 +25,22 @@ def create_baseline_scenario(
     k_off_s: float = 2.0,
     k_bleach_s: float = 0.08,
 ) -> SimulationScenario:
+    boundary = ReflectingSquareBoundary(field_size_um=field_size_um)
     return SimulationScenario(
-        scenario_id=BASELINE_SCENARIO_ID,
-        name=BASELINE_SCENARIO_NAME,
+        scenario_id=REFLECTING_BASELINE_ID,
+        name=REFLECTING_BASELINE_NAME,
         motion=BrownianMotion2D(
             diffusion_coefficient_um2_s=diffusion_coefficient_um2_s
         ),
-        boundary=ReflectingSquareBoundary(field_size_um=field_size_um),
+        boundary=boundary,
         photophysics=ThreeStateMarkovBlinking(
             initial_on_fraction=initial_on_fraction,
             k_on_s=k_on_s,
             k_off_s=k_off_s,
             k_bleach_s=k_bleach_s,
         ),
-        observation=IdealOnStateObservation(),
+        observation=IdealOnStateObservation(
+            lower_bounds_um=(0.0, 0.0),
+            upper_bounds_um=(field_size_um, field_size_um),
+        ),
     )

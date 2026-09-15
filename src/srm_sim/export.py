@@ -11,7 +11,7 @@ from .simulator import SimulationResult
 
 
 OBSERVATION_FORMAT_VERSION = "1.0"
-GROUND_TRUTH_FORMAT_VERSION = "1.0"
+GROUND_TRUTH_FORMAT_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,8 @@ def _build_detection_export(
     result: SimulationResult, detection_order_seed: int
 ) -> _DetectionExport:
     rng = np.random.default_rng(detection_order_seed)
-    dimension = result.positions_um.shape[2]
+    physical_dimension = result.positions_um.shape[2]
+    observation_dimension = result.observed_positions_um.shape[2]
 
     frame_parts: list[NDArray[np.int64]] = []
     time_parts: list[NDArray[np.float64]] = []
@@ -120,9 +121,11 @@ def _build_detection_export(
     else:
         frame_indices = np.empty(0, dtype=np.int64)
         times_s = np.empty(0, dtype=np.float64)
-        observed_positions_um = np.empty((0, dimension), dtype=np.float64)
+        observed_positions_um = np.empty(
+            (0, observation_dimension), dtype=np.float64
+        )
         true_particle_ids = np.empty(0, dtype=np.int64)
-        true_positions_um = np.empty((0, dimension), dtype=np.float64)
+        true_positions_um = np.empty((0, physical_dimension), dtype=np.float64)
 
     detection_ids = np.arange(frame_indices.size, dtype=np.int64)
     observation_model = result.scenario.observation.model_id
@@ -193,6 +196,9 @@ def save_output_bundle(
         observation_model=components["observation"]["model_id"],
         scenario_json=json.dumps(scenario_metadata, sort_keys=True),
         config_json=json.dumps(asdict(result.config), sort_keys=True),
+        physical_dimension=result.scenario.motion.dimension,
+        observation_dimension=result.scenario.observation.output_dimension,
+        physical_initialization_bounds_um=result.scenario.boundary.bounds_um,
         frame_times_s=result.time_s,
         particle_ids=result.particle_ids,
         bounds_um=result.bounds_um,
@@ -200,6 +206,7 @@ def save_output_bundle(
         states=result.states,
         emitting=result.emitting,
         active=result.active,
+        in_observation_region=result.in_observation_region,
         detection_ids=observations.detection_ids,
         detection_frame_indices=observations.frame_indices,
         detection_particle_ids=exported.true_particle_ids,
