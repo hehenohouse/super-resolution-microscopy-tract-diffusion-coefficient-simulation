@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srm-tracking-simulation-framework"
+version = "0.1.0"
+description = "A modular simulation framework for super-resolution microscopy particle tracking"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10,<4",
+    "numpy>=2.2,<3",
+    "pillow>=11,<13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
