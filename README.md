@@ -296,7 +296,7 @@ BLEACHED --no transition--> BLEACHED
 For a transition with constant rate $k$, the waiting time is exponentially distributed:
 
 $$
-T \sim \operatorname{Exp}(k),
+T \sim \mathrm{Exp}(k),
 \qquad
 P(T>t)=e^{-kt}.
 $$
@@ -310,7 +310,7 @@ $$
 For an OFF molecule,
 
 $$
-T_{\mathrm{off}} \sim \operatorname{Exp}(k_{\mathrm{on}}),
+T_{\mathrm{off}} \sim \mathrm{Exp}(k_{\mathrm{on}}),
 \qquad
 \mathbb{E}[T_{\mathrm{off}}]=\frac{1}{k_{\mathrm{on}}}.
 $$
@@ -319,7 +319,7 @@ Temporary darkening and permanent bleaching are competing events while a molecul
 
 $$
 T_{\mathrm{on}}
-\sim \operatorname{Exp}(k_{\mathrm{off}}+k_{\mathrm{bleach}}),
+\sim \mathrm{Exp}(k_{\mathrm{off}}+k_{\mathrm{bleach}}),
 $$
 
 with mean duration
