@@ -7,7 +7,9 @@ from typing import Callable
 from srm_sim import (
     SimulationConfig,
     SimulationScenario,
+    create_chromosome_bound_dynamic_2d,
     create_free_diffusion_benchmark,
+    create_multi_chromosome_bound_dynamic_2d,
     create_projected_3d_free_diffusion_benchmark,
     create_reflecting_baseline,
     save_animation,
@@ -17,6 +19,47 @@ from srm_sim import (
 
 
 ScenarioBuilder = Callable[[], tuple[SimulationConfig, SimulationScenario]]
+
+
+def build_chromosome_bound_dynamic_2d(
+) -> tuple[SimulationConfig, SimulationScenario]:
+    run_config = SimulationConfig(
+        n_particles=100,
+        n_frames=200,
+        frame_interval_s=0.05,
+        random_seed=7,
+    )
+    scenario = create_chromosome_bound_dynamic_2d(
+        protein_diffusion_coefficient_um2_s=0.005,
+        chromosome_diffusion_coefficient_um2_s=0.001,
+        chromosome_relaxation_rate_s=1.0 / 30.0,
+        rotational_diffusion_rad2_s=0.001,
+        ellipse_semi_major_axis_um=2.0,
+        ellipse_semi_minor_axis_um=0.35,
+        localization_sigma_um=0.03,
+    )
+    return run_config, scenario
+
+
+def build_multi_chromosome_bound_dynamic_2d(
+) -> tuple[SimulationConfig, SimulationScenario]:
+    run_config = SimulationConfig(
+        n_particles=120,
+        n_frames=200,
+        frame_interval_s=0.05,
+        random_seed=7,
+    )
+    scenario = create_multi_chromosome_bound_dynamic_2d(
+        n_chromosomes=6,
+        protein_diffusion_coefficient_um2_s=0.1,
+        chromosome_diffusion_coefficient_um2_s=0.001,
+        chromosome_relaxation_rate_s=1.0 / 30.0,
+        rotational_diffusion_rad2_s=0.001,
+        ellipse_semi_major_axis_um=2.0,
+        ellipse_semi_minor_axis_um=0.35,
+        localization_sigma_um=0.03,
+    )
+    return run_config, scenario
 
 
 def build_reflecting_baseline() -> tuple[SimulationConfig, SimulationScenario]:
@@ -81,6 +124,8 @@ def build_projected_3d_free_diffusion_benchmark(
 
 SCENARIO_BUILDERS: dict[str, ScenarioBuilder] = {
     "3d": build_projected_3d_free_diffusion_benchmark,
+    "chromosome": build_chromosome_bound_dynamic_2d,
+    "chromosomes": build_multi_chromosome_bound_dynamic_2d,
     "reflecting": build_reflecting_baseline,
     "free": build_free_diffusion_benchmark,
 }

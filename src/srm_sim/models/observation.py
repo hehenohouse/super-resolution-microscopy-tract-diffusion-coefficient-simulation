@@ -132,3 +132,76 @@ class IdealAxialSlabProjectionObservation:
             "upper_bounds_um": list(self.upper_bounds_um),
             "projection": "xy",
         }
+
+
+@dataclass(frozen=True)
+class GaussianLocalizationObservation:
+    lower_bounds_um: tuple[float, float] = (0.0, 0.0)
+    upper_bounds_um: tuple[float, float] = (10.0, 10.0)
+    localization_sigma_um: float = 0.03
+
+    model_id: ClassVar[str] = "gaussian_localization_in_rectangular_fov"
+    input_dimension: ClassVar[int] = 2
+    output_dimension: ClassVar[int] = 2
+
+    def __post_init__(self) -> None:
+        lower = np.asarray(self.lower_bounds_um, dtype=np.float64)
+        upper = np.asarray(self.upper_bounds_um, dtype=np.float64)
+        if lower.shape != (2,) or upper.shape != (2,):
+            raise ValueError("observation bounds must contain x and y")
+        if not np.isfinite(lower).all() or not np.isfinite(upper).all():
+            raise ValueError("observation bounds must be finite")
+        if np.any(upper <= lower):
+            raise ValueError("each upper observation bound must exceed its lower bound")
+        if (
+            not np.isfinite(self.localization_sigma_um)
+            or self.localization_sigma_um < 0.0
+        ):
+            raise ValueError("localization_sigma_um must be finite and nonnegative")
+
+    @property
+    def bounds_um(self) -> NDArray[np.float64]:
+        return np.column_stack((self.lower_bounds_um, self.upper_bounds_um)).astype(
+            np.float64
+        )
+
+    def in_observation_region(
+        self, positions_um: NDArray[np.float64]
+    ) -> NDArray[np.bool_]:
+        if positions_um.ndim != 2 or positions_um.shape[1] != 2:
+            raise ValueError("positions_um has an invalid shape")
+        lower = np.asarray(self.lower_bounds_um, dtype=np.float64)
+        upper = np.asarray(self.upper_bounds_um, dtype=np.float64)
+        return np.all((positions_um >= lower) & (positions_um <= upper), axis=1)
+
+    def project_positions(
+        self, positions_um: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        if positions_um.ndim != 2 or positions_um.shape[1] != 2:
+            raise ValueError("positions_um has an invalid shape")
+        return positions_um.copy()
+
+    def observe(
+        self,
+        positions_um: NDArray[np.float64],
+        emitting: NDArray[np.bool_],
+        rng: np.random.Generator,
+    ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+        visible = emitting & self.in_observation_region(positions_um)
+        observed_positions_um = np.full_like(positions_um, np.nan)
+        observed_positions_um[visible] = positions_um[visible]
+        if self.localization_sigma_um > 0.0:
+            observed_positions_um[visible] += rng.normal(
+                0.0,
+                self.localization_sigma_um,
+                size=(int(visible.sum()), self.output_dimension),
+            )
+        return observed_positions_um, visible
+
+    def parameters(self) -> Mapping[str, Any]:
+        return {
+            "lower_bounds_um": list(self.lower_bounds_um),
+            "upper_bounds_um": list(self.upper_bounds_um),
+            "localization_sigma_um": self.localization_sigma_um,
+            "noise_applied_to": "visible_localizations_only",
+        }
