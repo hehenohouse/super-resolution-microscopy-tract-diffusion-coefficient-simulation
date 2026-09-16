@@ -2,21 +2,24 @@
 
 A modular framework for constructing controlled super-resolution microscopy (SRM) particle-tracking simulations.
 
-The project is not a single physical model. Each simulation **scenario** combines four independent components:
+The project is not a single physical model. Each simulation **scenario** combines reusable components. Standard scenarios use four components, while coupled scenarios may also include a shared scene model:
 
 ```text
 motion model
     + boundary model
     + photophysics model
     + observation model
+    + optional scene model
     = simulation scenario
 ```
 
-Three scenarios are currently included:
+Five scenarios are currently included:
 
 1. A default 3D free-diffusion benchmark observed through a finite axial slab and projected to 2D.
 2. A reflecting 2D baseline for confinement and tracking experiments.
 3. A free-diffusion 2D benchmark for testing diffusion-coefficient recovery without a reflecting wall.
+4. A single-chromosome-bound 2D simulation that combines protein diffusion in one chromosome-local effective ellipse with shared chromosome translation and rotation.
+5. A multi-chromosome-bound 2D simulation with six independently moving effective chromosome ellipses and permanent protein-to-chromosome assignments.
 
 The repository does not yet contain a tracking algorithm or tracking evaluation metrics.
 
@@ -36,11 +39,13 @@ Run the default 3D-to-2D benchmark:
 & ".\.venv\Scripts\python.exe" main.py
 ```
 
-Run either retained 2D scenario explicitly:
+Run either retained 2D benchmark or the chromosome simulation explicitly:
 
 ```powershell
 & ".\.venv\Scripts\python.exe" main.py --scenario reflecting
 & ".\.venv\Scripts\python.exe" main.py --scenario free
+& ".\.venv\Scripts\python.exe" main.py --scenario chromosome
+& ".\.venv\Scripts\python.exe" main.py --scenario chromosomes
 ```
 
 Skip GIF generation during faster numerical runs:
@@ -61,19 +66,18 @@ outputs/<scenario_id>/simulation_preview.gif
 
 ## Scenario summary
 
-| Property | Default projected 3D benchmark | Reflecting 2D baseline | Free-diffusion 2D benchmark |
-|---|---|---|---|
-| Scenario ID | `free_diffusion_benchmark_3d_to_2d_axial_slab_markov` | `reflecting_baseline_2d_brownian_markov` | `free_diffusion_benchmark_2d_brownian_markov` |
-| Physical motion | 3D Brownian motion | 2D Brownian motion | 2D Brownian motion |
-| Physical boundary | None; unbounded space | Reflecting 10 x 10 um square | None; unbounded plane |
-| Initial reservoir | 30 x 30 x 22 um | 10 x 10 um | 30 x 30 um |
-| Observation region | Central 10 x 10 x 2 um volume | 10 x 10 um window | Central 10 x 10 um window |
-| Public coordinates | 2D XY projection | 2D XY | 2D XY |
-| Number of particles | 5,000 | 100 | 900 |
-| Diffusion coefficient | 0.5 um^2/s | 0.5 um^2/s | 0.5 um^2/s |
-| Intended use | Axial entry/exit and projected tracking | Confinement and wall-sensitive tracking | Free-diffusion coefficient recovery |
+| Property | Default projected 3D | Reflecting 2D | Free 2D | Single chromosome | Multiple chromosomes |
+|---|---|---|---|---|---|
+| Scenario ID | `free_diffusion_benchmark_3d_to_2d_axial_slab_markov` | `reflecting_baseline_2d_brownian_markov` | `free_diffusion_benchmark_2d_brownian_markov` | `chromosome_bound_dynamic_2d` | `multi_chromosome_bound_dynamic_2d` |
+| Physical motion | 3D Brownian | 2D Brownian | 2D Brownian | Local Brownian plus one rigid pose | Local Brownian plus independent rigid poses |
+| Physical boundary | None | Reflecting square | None | One effective local ellipse | One effective local ellipse per chromosome |
+| Observation region | Central 10 x 10 x 2 um | 10 x 10 um | Central 10 x 10 um | 10 x 10 um lab frame | 10 x 10 um lab frame |
+| Public coordinates | 2D XY projection | 2D XY | 2D XY | Noisy 2D XY | Noisy 2D XY |
+| Number of particles | 5,000 | 100 | 900 | 100 | 120 total across 6 chromosomes |
+| Protein diffusion coefficient | 0.5 um^2/s | 0.5 um^2/s | 0.5 um^2/s | 0.005 um^2/s | 0.1 um^2/s |
+| Intended use | Projected tracking | Wall-sensitive baseline | Free-diffusion benchmark | Single-chromosome control | Multi-chromosome coupled simulation |
 
-All three scenarios use 200 frames, a frame interval of 0.05 s, identical three-state Markov photophysics, ideal localization, and reproducible random seeds.
+All five scenarios use 200 frames, a frame interval of 0.05 s, identical three-state Markov photophysics, and reproducible random seeds. The first three use ideal localization; both chromosome scenarios add configurable Gaussian localization noise.
 
 ## Default projected 3D benchmark
 
@@ -270,9 +274,214 @@ $$
 
 Unlike reflection, crossing the finite field-of-view boundary does not alter a physical displacement. The finite window still introduces trajectory censoring: tracks begin when a molecule enters the window and end when it leaves. Tracking and diffusion estimators should account for that selection effect, but there is no artificial bounce at the image edge.
 
+## Chromosome-bound dynamic 2D simulation
+
+Stable scenario ID:
+
+```text
+chromosome_bound_dynamic_2d
+```
+
+Composition:
+
+```text
+Local motion:  BrownianMotion2D
+Local boundary: ReflectingEllipseBoundary
+Scene:         DynamicChromosomeScene2D
+Photophysics:  ThreeStateMarkovBlinking
+Observation:   GaussianLocalizationObservation
+```
+
+This scenario generates proteins bound to one moving chromosome. Protein positions are evolved in a chromosome-local coordinate system and then transformed into the laboratory coordinate system:
+
+$$
+\mathbf{x}_i(t)
+=
+\mathbf{C}(t)
++
+R(\theta(t))\mathbf{u}_i(t),
+$$
+
+where $\mathbf{u}_i(t)$ is protein $i$ in chromosome-local coordinates, $\mathbf{C}(t)$ is the shared chromosome center, and $\theta(t)$ is the shared chromosome orientation. The rotation matrix is
+
+$$
+R(\theta)
+=
+\begin{bmatrix}
+\cos\theta & -\sin\theta\\
+\sin\theta & \cos\theta
+\end{bmatrix}.
+$$
+
+The local protein displacement follows
+
+$$
+\Delta\mathbf{u}_i
+\sim
+\mathcal{N}\!\left(\mathbf{0},2D_{\mathrm p}\Delta t\,I\right).
+$$
+
+The chromosome center follows an Ornstein--Uhlenbeck process around $\boldsymbol{\mu}$,
+
+$$
+d\mathbf{C}
+=
+-\lambda(\mathbf{C}-\boldsymbol{\mu})dt
++
+\sqrt{2D_{\mathrm c}}\,d\mathbf{W},
+$$
+
+implemented with the exact finite-time update for $\lambda>0$:
+
+$$
+\mathbf{C}_{t+\Delta t}
+=
+\boldsymbol{\mu}
++
+e^{-\lambda\Delta t}(\mathbf{C}_t-\boldsymbol{\mu})
++
+\sqrt{\frac{D_{\mathrm c}}{\lambda}
+\left(1-e^{-2\lambda\Delta t}\right)}\,\boldsymbol{\xi}.
+$$
+
+When $\lambda=0$, translation uses the Brownian limit. Orientation follows rotational diffusion:
+
+$$
+\theta_{t+\Delta t}
+=
+\theta_t
++
+\sqrt{2D_{\mathrm r}\Delta t}\,\eta.
+$$
+
+Setting both `chromosome_diffusion_coefficient_um2_s=0.0` and `rotational_diffusion_rad2_s=0.0` freezes the shared chromosome pose, providing a static-chromosome simulation control. This remains static even if the initial center differs from the OU equilibrium center.
+
+### Effective chromosome-local boundary
+
+Local coordinates are confined by
+
+$$
+\frac{u_x^2}{a^2}
++
+\frac{u_y^2}{b^2}
+\leq1.
+$$
+
+The ellipse is only an **effective computational confinement mask**. It is not a literal claim that a chromosome has an elliptical shape, and it is not a cylinder-plus-hemispheres model. A long, narrow mask allows local motion to become strongly anisotropic across time scales, but this simulator does not calculate an effective dimension, RMS/MSD curve, or diffusion coefficient.
+
+A finite step that crosses the ellipse is reflected about the local ellipse normal. If one step crosses the boundary more than once, segment intersection and residual-displacement reflection are repeated until the final point is inside. An exactly grazing step that starts on the boundary is a degenerate case with no inward specular segment; it is projected just inside the ellipse instead. The method is therefore a finite-step no-flux approximation, with specular reflection for ordinary crossings and a documented projection fallback for grazing contact.
+
+### Localization model and coordinate layers
+
+Visibility is determined from the noiseless laboratory position and photophysical state. Gaussian localization noise is then added only to visible detections:
+
+$$
+\mathbf{y}_{i,t}
+=
+\mathbf{x}_{i,t}
++
+\boldsymbol{\epsilon}_{i,t},
+\qquad
+\boldsymbol{\epsilon}_{i,t}
+\sim
+\mathcal{N}(\mathbf{0},\sigma_{\mathrm{loc}}^2I).
+$$
+
+Noisy positions are not clipped to the field of view. Clipping would bias the localization-error distribution. The public file contains $\mathbf{y}_{i,t}$ only; chromosome-local positions, noiseless laboratory positions, chromosome center, orientation, and true identities remain private.
+
+The default values below are **simulation settings, not universal biological constants**:
+
+| Parameter | Default |
+|---|---:|
+| Protein diffusion coefficient $D_{\mathrm p}$ | 0.005 um^2/s |
+| Chromosome diffusion coefficient $D_{\mathrm c}$ | 0.001 um^2/s |
+| Chromosome relaxation rate $\lambda$ | 1/30 1/s |
+| Rotational diffusion $D_{\mathrm r}$ | 0.001 rad^2/s |
+| Ellipse semi-major axis $a$ | 2.0 um |
+| Ellipse semi-minor axis $b$ | 0.35 um |
+| Frame interval $\Delta t$ | 0.05 s |
+| Localization standard deviation $\sigma_{\mathrm{loc}}$ | 0.03 um |
+| Initial/equilibrium chromosome center | (5.0, 5.0) um |
+| Initial orientation | 0 rad |
+
+For the default slow protein diffusion, the one-frame physical displacement standard deviation per coordinate is
+
+$$
+\sqrt{2D_{\mathrm p}\Delta t}
+=
+\sqrt{0.0005}
+\approx0.0224\;\mu\mathrm{m}
+=
+22.4\;\mathrm{nm}.
+$$
+
+The default 30 nm localization uncertainty is therefore comparable to, and slightly larger than, a one-frame protein displacement in one coordinate. Any later diffusion-recovery study should evaluate measurement noise explicitly. This repository currently generates the simulation and ground truth only; it does not perform that recovery or calculate RMS/MSD.
+
+## Multi-chromosome-bound dynamic 2D simulation
+
+Stable scenario ID:
+
+```text
+multi_chromosome_bound_dynamic_2d
+```
+
+Run the default six-chromosome preset with:
+
+```powershell
+& ".\.venv\Scripts\python.exe" main.py --scenario chromosomes
+```
+
+This is a separate scenario rather than a replacement for the one-chromosome control. If protein $i$ is permanently assigned to chromosome $k(i)$, its laboratory position is
+
+$$
+\mathbf{x}_i(t)
+=
+\mathbf{C}_{k(i)}(t)
++
+R\!\left(\theta_{k(i)}(t)\right)\mathbf{u}_i(t).
+$$
+
+Each chromosome has its own OU center process, rotational-diffusion process, local effective ellipse, and bound-protein subset. `SimulationConfig.n_particles` remains the **total** protein count. The simulator divides those proteins deterministically and as evenly as possible among chromosomes; proteins do not switch chromosomes during a run.
+
+The default CLI preset uses six chromosomes and 120 proteins, giving 20 proteins per chromosome. Initial centers and orientations are sampled reproducibly from `SimulationConfig.random_seed`. Each initial oriented ellipse is kept fully inside the observation window, and a modest minimum center separation prevents nearly coincident centers. Projected ellipses are still allowed to overlap, both initially and later. Chromosomes do not collide, exclude one another, deform, divide, or interact.
+
+The multi-chromosome CLI preset uses these default physical simulation settings:
+
+| Parameter | Default |
+|---|---:|
+| Chromosome count $K$ | 6 |
+| Total proteins | 120 |
+| Protein diffusion coefficient $D_{\mathrm p}$ | 0.1 um^2/s |
+| Chromosome diffusion coefficient $D_{\mathrm c}$ | 0.001 um^2/s |
+| Chromosome relaxation rate $\lambda$ | 1/30 1/s |
+| Rotational diffusion $D_{\mathrm r}$ | 0.001 rad^2/s |
+| Ellipse semi-axes $(a,b)$ | (2.0, 0.35) um |
+| Minimum initial center separation | 1.5 um |
+| Localization standard deviation | 0.03 um |
+
+These are configurable simulation settings, not universal biological constants. The multi-chromosome protein diffusion is intentionally stronger than the `0.005 um^2/s` single-chromosome slow control. At the default frame interval, its one-frame displacement standard deviation per coordinate is
+
+$$
+\sqrt{2D_{\mathrm p}\Delta t}
+=
+\sqrt{2(0.1)(0.05)}
+=0.1\;\mu\mathrm{m}
+=100\;\mathrm{nm}.
+$$
+
+$D_{\mathrm p}$ controls protein motion **relative to its assigned chromosome**. In contrast, $D_{\mathrm c}$ and $D_{\mathrm r}$ translate and rotate the entire chromosome-local coordinate system. As in the one-chromosome model, every ellipse is only an effective 2D no-flux confinement mask and is not a literal chromosome shape. The reflecting boundary keeps proteins inside it. Values much larger than `0.1 um^2/s` can cause frequent finite-step reflections across the narrow `0.35 um` semi-minor axis; such settings should be checked with a smaller simulation time step.
+
+### Multi-chromosome preview
+
+The private ground-truth panel draws every effective ellipse, its center, major-axis direction, and the preceding two seconds of its **actual sampled center trajectory**. It also draws the preceding one second of true motion for up to two deterministically selected proteins per chromosome. These overlays make chromosome and local protein motion easier to see without multiplying or otherwise exaggerating displacement. The public observation panel remains an unlabeled set of noisy visible detections and does not reveal chromosome membership, pose, geometry, or any trail.
+
+The multi-chromosome private bundle uses ground-truth format `1.3` and includes permanent particle-to-chromosome assignments, local positions, all chromosome centers and orientations, repeated ellipse semi-axes, and per-chromosome initialization bounds. Public observations remain format `1.0` with the same key set as every other scenario.
+
+This scenario still performs simulation only. The center and selected-protein trails are visualization aids based on private truth; they are not inferred tracks and are not an RMS/MSD or diffusion analysis.
+
 ## Shared photophysics
 
-All three scenarios use the same three-state model:
+All five scenarios use the same three-state model:
 
 ```text
 OFF  --k_on--> ON
@@ -350,9 +559,9 @@ $$
 P(S_{t+\Delta t}=\mathrm{BLEACHED}\mid S_t=\mathrm{BLEACHED})=1.
 $$
 
-## Ideal observation model
+## Observation models
 
-The current observation component reports an exact localization only when a molecule is ON and inside the configured field of view.
+The three benchmark scenarios report an exact localization only when a molecule is ON and inside the configured field of view.
 
 For a molecule inside the field of view,
 
@@ -368,7 +577,7 @@ $$
 \mathbf{y}_{i,t}=\varnothing.
 $$
 
-The public output is therefore a localization table, not a camera image. It does not yet contain a point-spread function, pixels, photon noise, background fluorescence, localization uncertainty, or motion blur.
+The chromosome scenarios instead use the visible-only Gaussian localization model described above. In every scenario the public output is a localization table, not a camera image. It does not yet contain a point-spread function, pixels, photon noise, background fluorescence, or motion blur.
 
 ## Output trust boundary
 
@@ -391,13 +600,15 @@ A tracking method may read this file. It contains only visible detections:
 | `times_s` | `(n_detections,)` | Detection times |
 | `positions_um` | `(n_detections, observation_dimensions)` | Observed bright-spot coordinates |
 
-It does not contain true particle IDs, hidden states, invisible positions, complete trajectories, motion parameters, axial coordinates, or a persistent particle-slot axis. Detection order is shuffled independently within every frame. The projected 3D scenario therefore still exposes only two columns: x and y.
+It does not contain true particle IDs, hidden states, invisible positions, complete trajectories, motion parameters, axial coordinates, chromosome-local coordinates, chromosome assignments, chromosome centers or orientations, or a persistent particle-slot axis. Detection order is shuffled independently within every frame. For both chromosome scenarios, the published `detection_order_seed` is combined with private noiseless truth before constructing the permutation, so the public seed alone cannot replay the hidden particle ordering. The projected 3D scenario still exposes only two columns: x and y.
 
 ### Private evaluation data: `ground_truth.npz`
 
 Do not give this file to a tracking method. It contains:
 
 - Complete true trajectories and stable particle IDs, including XYZ coordinates for the projected 3D scenario.
+- For the single-chromosome scenario (private format `1.2`): chromosome-local trajectories, noisy dense observations, visibility, center and orientation per frame, and effective ellipse semi-axes.
+- For the multi-chromosome scenario (private format `1.3`): all of the above plus permanent particle-to-chromosome assignments, every chromosome pose, repeated ellipse axes, and per-chromosome initialization bounds.
 - Internal photophysics states.
 - Emitting, active, and in-observation-region masks.
 - Complete scenario and configuration metadata.
@@ -407,7 +618,7 @@ A future evaluator can compare a tracker's predicted identities with this hidden
 
 ### Visualization: `simulation_preview.gif`
 
-The GIF is for human inspection only. The left panel shows ground truth inside the complete observation region; 3D truth is projected onto XY for display. The right panel shows only the XY detections available to tracking.
+The GIF is for human inspection only. The left panel shows private ground truth inside the complete observation region; 3D truth is projected onto XY for display. Chromosome previews also show true effective ellipse outlines, centers, major-axis directions, and two-second center trails. The right panel shows only the XY detections available to tracking and never displays chromosome membership or pose.
 
 ## Consuming observations from another Python program
 
@@ -446,6 +657,7 @@ The tracker creates `predicted_track_id`. It must never receive the true `partic
 - `src/srm_sim/models/boundary.py`: reflecting and unbounded physical domains.
 - `src/srm_sim/models/photophysics.py`: blinking and bleaching.
 - `src/srm_sim/models/observation.py`: finite observation windows and localization output.
+- `src/srm_sim/models/scene.py`: pure single- and multi-chromosome rigid-pose dynamics for coupled scenes.
 - `src/srm_sim/scenarios/`: scientifically meaningful component combinations.
 - `src/srm_sim/simulator.py`: generic scenario orchestration.
 - `src/srm_sim/export.py`: tracking-safe public export and private truth export.
@@ -475,7 +687,7 @@ ConfinedDiffusion2D
 - Point-spread function and camera pixels
 - Photon and camera noise
 - Background fluorescence
-- Localization uncertainty
+- Localization uncertainty for scenarios other than the chromosome-bound simulation
 - Motion blur
 - Missed detections and false positives
 - Multiple diffusion populations
