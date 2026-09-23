@@ -1,0 +1,2 @@
+condition_id,target_id,genotype_id,replicate_id,cell_id,input_file,position_variable,coordinate_unit,frame_time_s,enabled
+UNASSIGNED,UNASSIGNED,UNASSIGNED,replicate_1,testPos2,../testPos2.mat,pos,m,,true
