@@ -4,7 +4,45 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 
 ## [Unreleased]
 
-### Added
+### 2026-09-28
+
+#### Added
+
+- Added bin-width-independent probability densities in μm⁻¹ while preserving every probability and count output.
+- Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and interpolated median summaries for cells and replicas.
+- Added full-range and 0–0.5 μm density panels to cell, replica, and all-cell Intra plots.
+- Added SHA-256 input fingerprints, full configuration, schema/package/Python versions, analysis runtime, Git commit, and dirty-state provenance.
+- Added `replica_summary.csv` and provenance/summary scalars to NPZ output.
+- Added tests for density conversion and integrals, positive-Intra summaries, provenance, two-panel plots, and enhanced output round trips.
+
+#### Changed
+
+- Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
+- Extended the README with probability-density definitions, positive-Intra metrics, provenance fields, and the enhanced output tree.
+
+#### Validation
+
+Revalidated `WT / Miro1 / 20251016_WT_Miro1_V7` after adding the derived outputs:
+
+| Metric | Result |
+|---|---:|
+| Included cells | 10 |
+| Equal-cell replica beta | 0.830216531615378 |
+| Positive Intra peak | 0.055 μm |
+| Positive Intra mass | 0.1745450818 |
+| Positive Intra mass, 0–300 nm | 0.1650372922 |
+| Positive-weighted mean distance | 0.1463261920 μm |
+| Positive-weighted median distance | 0.0913423954 μm |
+
+- Density integrals recover Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684.
+- All 10 cells share the same MAT SHA-256, beginning `765effd0a438`; the validation run recorded commit `fc2b3306c99aa4ec25f2a01b478a22de36891ac7` with a dirty working tree.
+- Confirmed that the enhanced scientific arrays are identical to the preceding 10 nm output.
+- Confirmed that all 21 tests pass.
+- Rendered and inspected the full-range/zoom versions of cell `diagnostic.png`, `replica_distribution.png`, and `all_cell_intra.png`.
+
+### 2026-09-27
+
+#### Added
 
 - Added MATLAB v7.3/HDF5 input support through `h5py`.
 - Added one-pass discovery of all unfiltered Base records in one MAT replica.
@@ -30,14 +68,9 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Added replica JSON, NPZ, CSV, cell-summary, and diagnostic outputs.
 - Added `all_cell_intra.png`, showing every valid cell's unmodified Intra contribution and the equal-cell replica mean.
 - Added `cell_ids` and `cell_intra_contributions` to replica NPZ output.
-- Added bin-width-independent probability densities in μm⁻¹ while preserving every probability and count output.
-- Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and interpolated median summaries for cells and replicas.
-- Added full-range and 0–0.5 μm density panels to cell, replica, and all-cell Intra plots.
-- Added SHA-256 input fingerprints, full configuration, schema/package/Python versions, analysis runtime, Git commit, and dirty-state provenance.
-- Added `replica_summary.csv` and provenance/summary scalars to NPZ output.
-- Added tests for Base discovery, malformed/duplicate records, beta constraints, exact equal-cell aggregation, pair-count conservation, densities, positive-Intra summaries, provenance, plots, and output round trips.
+- Added tests for Base discovery, malformed/duplicate records, beta constraints, exact equal-cell aggregation, pair-count conservation, and replica output round trips.
 
-### Changed
+#### Changed
 
 - Corrected the active hierarchy to:
 
@@ -53,10 +86,9 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Retained per-cell raw pair counts for QC without using them to weight the replica distribution.
 - Replaced the former dual-aggregation files with `replica_distributions.csv`, `replica_distribution.png`, and `all_cell_intra.png`.
 - Preserved signed negative Intra bins instead of clipping them.
-- Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
-- Rewrote the README around the active Xinran workflow and documented current project/output directory structures.
+- Rewrote the README around the active Xinran workflow and documented the project/output directory structures.
 
-### Removed
+#### Removed
 
 The active replica output no longer produces:
 
@@ -66,9 +98,9 @@ The active replica output no longer produces:
 - `aggregation_comparison.png`;
 - pair-weighted replica beta or pair-concentration interpretation.
 
-### Validation
+#### Validation
 
-#### One-cell pilot
+##### One-cell pilot
 
 Validated `C2-101625_WT_Miro1_T1`:
 
@@ -84,7 +116,7 @@ Validated `C2-101625_WT_Miro1_T1`:
 
 Expected-count reconstruction was verified to approximately `7.3e-12` pairs.
 
-#### First complete replica
+##### First complete replica
 
 Validated `WT / Miro1 / 20251016_WT_Miro1_V7`:
 
@@ -100,19 +132,9 @@ Validated `WT / Miro1 / 20251016_WT_Miro1_V7`:
 | Equal-cell replica beta | 0.830216531615378 |
 | Reconstruction error | 6.94e-18 |
 | Negative Intra bins | 134 |
-| Positive Intra peak | 0.055 μm |
-| Positive Intra mass | 0.1745450818 |
-| Positive Intra mass, 0–300 nm | 0.1650372922 |
-| Positive-weighted mean distance | 0.1463261920 μm |
-| Positive-weighted median distance | 0.0913423954 μm |
 
-Density integrals recover Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684. All 10 cells share the same MAT SHA-256, beginning `765effd0a438`; the run recorded commit `fc2b3306c99aa4ec25f2a01b478a22de36891ac7` with a dirty working tree.
-
-With the 10 nm histogram, the saved `cell_intra_contributions` array has shape `10 × 300`, and its binwise mean equals the saved replica Intra contribution exactly.
-
+- With the 10 nm histogram, the saved `cell_intra_contributions` array has shape `10 × 300`, and its binwise mean equals the saved replica Intra contribution exactly.
 - Compared with the 30 nm baseline, beta changed by `-0.0003605`; negative Intra mass increased from `0.003586` to `0.004762` as the narrower bins exposed more binwise residual variation.
-- Confirmed that all 21 tests pass.
-- Rendered and inspected the full-range/zoom versions of cell `diagnostic.png`, `replica_distribution.png`, and `all_cell_intra.png`.
 
 ## [0.1.0] - 2026-09-23
 
