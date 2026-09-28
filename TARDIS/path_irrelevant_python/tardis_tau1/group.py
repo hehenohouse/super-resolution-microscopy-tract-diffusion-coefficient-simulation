@@ -118,8 +118,8 @@ def save_group_result(result: GroupResult, output_dir: str | Path, *, save_plots
         encoding="utf-8",
     )
     if save_plots:
-        _write_group_distribution_plot(result, output / "group_mean_distributions.png")
-        _write_replica_intra_overlay(result, output / "replica_intra_overlay.png")
+        _write_group_distribution_plots(result, output)
+        _write_replica_intra_overlays(result, output)
 
 
 def _mean_and_error_band(
@@ -215,71 +215,49 @@ def _write_replica_summaries(result: GroupResult, path: Path) -> None:
         writer.writerows(result.replica_summaries)
 
 
-def _write_group_distribution_plot(result: GroupResult, path: Path) -> None:
+def _write_group_distribution_plots(result: GroupResult, output_dir: Path) -> None:
     plt = _pyplot()
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
     edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True, constrained_layout=True)
     styles = {
         "total": ("#2a78d6", "Total"),
         "inter_contribution": ("#eb6834", "Inter"),
         "intra_contribution": ("#1baf7a", "Intra"),
     }
-    for component in _COMPONENTS:
-        color, label = styles[component]
-        stats = result.distributions[component]
-        axes[0].plot(x_um, stats["mean_density_um_inv"], color=color, linewidth=3, label=label)
-        axes[0].fill_between(
-            x_um,
-            stats["mean_minus_sd_density_um_inv"],
-            stats["mean_plus_sd_density_um_inv"],
-            color=color,
-            alpha=0.16,
-            linewidth=0,
-        )
-    intra = result.distributions["intra_contribution"]
-    axes[1].plot(
-        x_um,
-        intra["mean_density_um_inv"],
-        color="#1baf7a",
-        linewidth=3.2,
-        label="Intra",
-    )
-    axes[1].fill_between(
-        x_um,
-        intra["mean_minus_sd_density_um_inv"],
-        intra["mean_plus_sd_density_um_inv"],
-        color="#1baf7a",
-        alpha=0.20,
-        linewidth=0,
-        label="± 1 SD",
-    )
-    for axis in axes:
+    title = f"{result.ids['condition']} · {result.ids['target']} · n={len(result.replica_ids)} biological replicas · mean ± 1 SD"
+    for suffix, zoom in (("full_range", False), ("zoom_0p5um", True)):
+        fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
+        if zoom:
+            intra = result.distributions["intra_contribution"]
+            axis.plot(x_um, intra["mean_density_um_inv"], color="#1baf7a", linewidth=3.2, label="Intra")
+            axis.fill_between(x_um, intra["mean_minus_sd_density_um_inv"], intra["mean_plus_sd_density_um_inv"], color="#1baf7a", alpha=0.20, linewidth=0, label="± 1 SD")
+        else:
+            for component in _COMPONENTS:
+                color, label = styles[component]
+                stats = result.distributions[component]
+                axis.plot(x_um, stats["mean_density_um_inv"], color=color, linewidth=3, label=label)
+                axis.fill_between(x_um, stats["mean_minus_sd_density_um_inv"], stats["mean_plus_sd_density_um_inv"], color=color, alpha=0.16, linewidth=0)
         axis.axhline(0, color="#777777", linewidth=0.8, linestyle=":")
         axis.grid(axis="y", color="#dddddd", linewidth=0.7)
         axis.spines[["top", "right"]].set_visible(False)
         axis.set_xlabel("Distance (μm)")
-    axes[0].set_xlim(edges_um[0], edges_um[-1])
-    axes[0].set_ylabel("Mean probability density (μm⁻¹)")
-    axes[0].set_title("Full range")
-    axes[1].set_xlim(0, min(0.5, edges_um[-1]))
-    axes[1].set_title("Zoom: 0–0.5 μm · Intra only")
-    axes[1].legend(frameon=False, loc="upper right")
-    fig.suptitle(
-        f"{result.ids['condition']} · {result.ids['target']} · "
-        f"n={len(result.replica_ids)} biological replicas · mean ± 1 SD"
-    )
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    plt.close(fig)
+        axis.set_xlim(0, min(0.5, edges_um[-1])) if zoom else axis.set_xlim(edges_um[0], edges_um[-1])
+        axis.set_ylabel("Mean probability density (μm⁻¹)")
+        axis.set_title("Zoom: 0–0.5 μm · Intra only" if zoom else "Full range")
+        if zoom:
+            axis.legend(frameon=False, loc="upper right")
+        fig.suptitle(title)
+        fig.savefig(output_dir / f"group_mean_distributions_{suffix}.png", dpi=180, facecolor="white", bbox_inches="tight")
+        plt.close(fig)
 
 
-def _write_replica_intra_overlay(result: GroupResult, path: Path) -> None:
+def _write_replica_intra_overlays(result: GroupResult, output_dir: Path) -> None:
     plt = _pyplot()
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
     edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True, constrained_layout=True)
     colors = plt.get_cmap("tab10").colors
-    for axis in axes:
+    for suffix, zoom in (("full_range", False), ("zoom_0p5um", True)):
+        fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
         stats = result.distributions["intra_contribution"]
         for index, (replica_id, values) in enumerate(zip(
             result.replica_ids,
@@ -307,14 +285,13 @@ def _write_replica_intra_overlay(result: GroupResult, path: Path) -> None:
         axis.grid(axis="y", color="#dddddd", linewidth=0.7)
         axis.spines[["top", "right"]].set_visible(False)
         axis.set_xlabel("Distance (μm)")
-    axes[0].set_xlim(edges_um[0], edges_um[-1])
-    axes[0].set_ylabel("Intra contribution density (μm⁻¹)")
-    axes[0].set_title("Full range")
-    axes[1].set_xlim(0, min(0.5, edges_um[-1]))
-    axes[1].set_title("Zoom: 0–0.5 μm")
-    axes[1].legend(frameon=False, loc="upper right")
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    plt.close(fig)
+        axis.set_xlim(0, min(0.5, edges_um[-1])) if zoom else axis.set_xlim(edges_um[0], edges_um[-1])
+        axis.set_ylabel("Intra contribution density (μm⁻¹)")
+        axis.set_title("Zoom: 0–0.5 μm" if zoom else "Full range")
+        if zoom:
+            axis.legend(frameon=False, loc="upper right")
+        fig.savefig(output_dir / f"replica_intra_overlay_{suffix}.png", dpi=180, facecolor="white", bbox_inches="tight")
+        plt.close(fig)
 
 
 def _pyplot() -> Any:

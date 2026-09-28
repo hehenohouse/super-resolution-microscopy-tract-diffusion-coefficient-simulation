@@ -34,6 +34,8 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
   records 6 and 7.
 - Added group-analysis tests and expanded replica-output tests for the new
   normalized figures.
+- Added peak-normalized, 0–0.5 μm Intra comparison figures and matching CSV
+  data for all four target-level and all three condition-level comparisons.
 - Added bin-width-independent probability densities in μm⁻¹ while preserving
   every probability and count output.
 - Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and
@@ -53,6 +55,8 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - The 0–0.5 µm zoom panel of cell, replica, and group plots now shows only the
   Intra curve; the full-range panel still shows Total, Inter, and Intra.
 - Increased primary curve line widths for clearer exported figures.
+- Replaced every generated full-range/zoom dual-panel PNG with two independent
+  files using the suffixes `_full_range.png` and `_zoom_0p5um.png`.
 - Standardized generated output under `TARDIS/results/` as
   `target / condition / {replicas, group, comparison}` plus a
   `condition_comparison/` directory. Earlier trial folders are retained only
@@ -60,6 +64,13 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
 - Extended the README with probability-density definitions, positive-Intra
   metrics, provenance fields, and the enhanced output tree.
+
+#### Removed
+
+- Stopped generating legacy combined dual-panel PNG names such as
+  `diagnostic.png`, `replica_distribution.png`, `all_cell_intra.png`,
+  `intra_contribution.png`, and `intra_area_normalized.png`. They are replaced
+  by explicit full-range and zoom file names.
 
 #### Validation
 

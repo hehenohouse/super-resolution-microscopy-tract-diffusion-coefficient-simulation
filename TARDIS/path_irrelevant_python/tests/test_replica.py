@@ -233,11 +233,12 @@ class ReplicaAggregationTests(unittest.TestCase):
             self.assertNotIn("comparison", payload)
             self.assertTrue((output / "replica_distributions.csv").is_file())
             self.assertTrue((output / "replica_summary.csv").is_file())
-            self.assertTrue((output / "replica_distribution.png").is_file())
-            self.assertTrue((output / "all_cell_intra.png").is_file())
-            self.assertTrue(
-                (output / "all_cell_intra_peak_normalized.png").is_file()
-            )
+            self.assertTrue((output / "replica_distribution_full_range.png").is_file())
+            self.assertTrue((output / "replica_distribution_zoom_0p5um.png").is_file())
+            self.assertTrue((output / "all_cell_intra_full_range.png").is_file())
+            self.assertTrue((output / "all_cell_intra_zoom_0p5um.png").is_file())
+            self.assertTrue((output / "all_cell_intra_peak_normalized_full_range.png").is_file())
+            self.assertTrue((output / "all_cell_intra_peak_normalized_zoom_0p5um.png").is_file())
             self.assertTrue(
                 (output / "cell_peak_normalized_shape_summary.csv").is_file()
             )

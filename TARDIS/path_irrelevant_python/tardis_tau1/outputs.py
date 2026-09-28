@@ -59,10 +59,8 @@ def save_result(
     )
     _write_distribution_csv(result, output_dir / "distributions.csv")
     if config.save_plots:
-        _write_diagnostic_plot(result, output_dir / "diagnostic.png", level)
-        _write_intra_area_normalized_plot(
-            result, output_dir / "intra_area_normalized.png", level
-        )
+        _write_diagnostic_plots(result, output_dir, level)
+        _write_intra_area_normalized_plots(result, output_dir, level)
 
 
 def save_replica_result(
@@ -126,16 +124,10 @@ def save_replica_result(
         if path.is_file():
             path.unlink()
     if config.save_plots:
-        _write_replica_plot(result, output_dir / "replica_distribution.png")
-        _write_intra_area_normalized_plot(
-            result, output_dir / "intra_area_normalized.png", "replica"
-        )
-        _write_all_cell_intra_plot(
-            result, cell_results, output_dir / "all_cell_intra.png"
-        )
-        _write_peak_normalized_all_cell_intra_plot(
-            result, cell_results, output_dir / "all_cell_intra_peak_normalized.png"
-        )
+        _write_diagnostic_plots(result, output_dir, "replica", stem="replica_distribution")
+        _write_intra_area_normalized_plots(result, output_dir, "replica")
+        _write_all_cell_intra_plots(result, cell_results, output_dir)
+        _write_peak_normalized_all_cell_intra_plots(result, cell_results, output_dir)
 
 
 def safe_component(value: Any) -> str:
@@ -321,49 +313,60 @@ def _write_replica_summary(result: ReplicaResult, path: Path) -> None:
         writer.writerow(row)
 
 
-def _write_diagnostic_plot(
-    result: CellResult | GenotypeResult, path: Path, level: str
-) -> None:
-    fig, _ = _build_distribution_figure(
-        result,
-        f"{level.capitalize()} τ=1 distribution · β={result.distributions['beta']:.4f}",
+def _split_paths(output_dir: Path, stem: str) -> tuple[Path, Path]:
+    """Return the standard full-range and zoom file names for one plot family."""
+    return (
+        output_dir / f"{stem}_full_range.png",
+        output_dir / f"{stem}_zoom_0p5um.png",
     )
+
+
+def _finish_single_axis(
+    fig: Any, axis: Any, path: Path, *, xlim: tuple[float, float], title: str,
+    ylabel: str, suptitle: str, legend: bool = False,
+) -> None:
+    axis.set_xlim(*xlim)
+    axis.set_title(title)
+    axis.set_xlabel("Distance (μm)")
+    axis.set_ylabel(ylabel)
+    if legend:
+        axis.legend(frameon=False, loc="upper right")
+    fig.suptitle(suptitle)
     fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
     _close_figure(fig)
 
 
-def _write_replica_plot(result: ReplicaResult, path: Path) -> None:
-    fig, _ = _build_distribution_figure(
-        result,
-        "Replica tau=1 equal-cell distribution "
-        f"· beta={result.distributions['beta']:.4f}",
-    )
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    _close_figure(fig)
-
-
-def _write_intra_area_normalized_plot(
-    result: CellResult | ReplicaResult, path: Path, level: str
+def _write_diagnostic_plots(
+    result: CellResult | GenotypeResult | ReplicaResult, output_dir: Path,
+    level: str, *, stem: str = "diagnostic",
 ) -> None:
-    """Save the signed Intra conditional density, whose area is one."""
-    plt = _pyplot()
+    """Write separate full-range and Intra-only zoom diagnostic figures."""
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    title = f"{level.capitalize()} τ=1 distribution · β={result.distributions['beta']:.4f}"
+    full_path, zoom_path = _split_paths(output_dir, stem)
+    for path, zoom in ((full_path, False), (zoom_path, True)):
+        plt = _pyplot()
+        fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
+        if zoom:
+            _plot_intra_distribution(axis, x_um, result.distributions)
+        else:
+            _plot_distributions(axis, x_um, result.distributions)
+        _finish_single_axis(
+            fig, axis, path,
+            xlim=(0.0, min(0.5, float(edges_um[-1]))) if zoom else (edges_um[0], edges_um[-1]),
+            title="Zoom: 0–0.5 μm · Intra only" if zoom else "Full range",
+            ylabel="Probability density (μm⁻¹)", suptitle=title, legend=zoom,
+        )
+
+
+def _write_intra_area_normalized_plots(
+    result: CellResult | ReplicaResult, output_dir: Path, level: str
+) -> None:
+    """Write separate full-range and zoom conditional Intra-density figures."""
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
     edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
     density = np.asarray(result.distributions["intra_conditional_density_um_inv"])
-    fig, axes = plt.subplots(
-        1, 2, figsize=(12.0, 4.8), sharey=True, constrained_layout=True
-    )
-    for axis in axes:
-        axis.plot(x_um, density, color="#1baf7a", linewidth=3.2, label="Intra")
-        _style_axis(axis)
-        axis.set_xlabel("Distance (μm)")
-    axes[0].set_xlim(edges_um[0], edges_um[-1])
-    axes[0].set_ylabel("Area-normalized Intra density (μm⁻¹)")
-    axes[0].set_title("Full range")
-    zoom_max = min(0.5, float(edges_um[-1]))
-    axes[1].set_xlim(0, zoom_max)
-    axes[1].set_title(f"Zoom: 0–{zoom_max:g} μm")
-    axes[1].legend(frameon=False, loc="upper right")
     summary = result.summaries.get("positive_intra", {})
     subtitle = ""
     if summary:
@@ -372,9 +375,19 @@ def _write_intra_area_normalized_plot(
             f" · mean {summary['positive_weighted_mean_distance_um'] * 1e3:.0f} nm"
             f" · median {summary['positive_weighted_median_distance_um'] * 1e3:.0f} nm"
         )
-    fig.suptitle(f"{level.capitalize()} Intra · area normalized{subtitle}")
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    _close_figure(fig)
+    full_path, zoom_path = _split_paths(output_dir, "intra_area_normalized")
+    for path, zoom in ((full_path, False), (zoom_path, True)):
+        plt = _pyplot()
+        fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
+        axis.plot(x_um, density, color="#1baf7a", linewidth=3.2, label="Intra")
+        _style_axis(axis)
+        _finish_single_axis(
+            fig, axis, path,
+            xlim=(0.0, min(0.5, float(edges_um[-1]))) if zoom else (edges_um[0], edges_um[-1]),
+            title="Zoom: 0–0.5 μm" if zoom else "Full range",
+            ylabel="Area-normalized Intra density (μm⁻¹)",
+            suptitle=f"{level.capitalize()} Intra · area normalized{subtitle}", legend=zoom,
+        )
 
 
 def _build_distribution_figure(result: Any, title: str) -> tuple[Any, Any]:
@@ -399,12 +412,37 @@ def _build_distribution_figure(result: Any, title: str) -> tuple[Any, Any]:
     return fig, axes
 
 
-def _write_all_cell_intra_plot(
-    result: ReplicaResult, cell_results: list[CellResult], path: Path
+def _write_all_cell_intra_plots(
+    result: ReplicaResult, cell_results: list[CellResult], output_dir: Path
 ) -> None:
-    fig, _ = _build_all_cell_intra_figure(result, cell_results)
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    _close_figure(fig)
+    """Write separate full-range and zoom overlays for all cells in a replica."""
+    plt = _pyplot()
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    colors = plt.get_cmap("tab10").colors
+    linestyles = ("-", "--", "-.", ":")
+    title = (
+        f"{result.ids['condition']} · {result.ids['target']} · "
+        f"{result.ids['replicate']} · tau=1 · n={len(cell_results)} cells"
+    )
+    full_path, zoom_path = _split_paths(output_dir, "all_cell_intra")
+    for path, zoom in ((full_path, False), (zoom_path, True)):
+        fig, axis = plt.subplots(figsize=(8.5, 5.8), constrained_layout=True)
+        for index, cell in enumerate(cell_results):
+            axis.plot(
+                x_um, cell.distributions["intra_contribution_density_um_inv"],
+                color=colors[index % len(colors)],
+                linestyle=linestyles[(index // len(colors)) % len(linestyles)],
+                linewidth=2.0, alpha=0.85, label=cell.ids["cell"],
+            )
+        axis.plot(x_um, result.distributions["intra_contribution_density_um_inv"], color="#111111", linewidth=3.0, label="Replica mean Intra", zorder=10)
+        _style_axis(axis)
+        _finish_single_axis(
+            fig, axis, path,
+            xlim=(0.0, min(0.5, float(edges_um[-1]))) if zoom else (edges_um[0], edges_um[-1]),
+            title="Zoom: 0–0.5 μm" if zoom else "Full range",
+            ylabel="Intra contribution density (μm⁻¹)", suptitle=title, legend=zoom,
+        )
 
 
 def _build_all_cell_intra_figure(
@@ -461,12 +499,35 @@ def _build_all_cell_intra_figure(
     return fig, axes
 
 
-def _write_peak_normalized_all_cell_intra_plot(
-    result: ReplicaResult, cell_results: list[CellResult], path: Path
+def _write_peak_normalized_all_cell_intra_plots(
+    result: ReplicaResult, cell_results: list[CellResult], output_dir: Path
 ) -> None:
-    fig, _ = _build_peak_normalized_all_cell_intra_figure(result, cell_results)
-    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
-    _close_figure(fig)
+    """Write separate full-range and zoom overlays after per-cell peak scaling."""
+    plt = _pyplot()
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    normalized, _ = _peak_normalized_intra_curves(cell_results)
+    mean_curve = np.nanmean(normalized, axis=0)
+    colors = plt.get_cmap("tab10").colors
+    linestyles = ("-", "--", "-.", ":")
+    title = (
+        f"{result.ids['condition']} · {result.ids['target']} · "
+        f"{result.ids['replicate']} · tau=1 · peak-normalized Intra"
+    )
+    full_path, zoom_path = _split_paths(output_dir, "all_cell_intra_peak_normalized")
+    for path, zoom in ((full_path, False), (zoom_path, True)):
+        fig, axis = plt.subplots(figsize=(8.5, 5.8), constrained_layout=True)
+        for index, (cell, curve) in enumerate(zip(cell_results, normalized)):
+            if np.isfinite(curve).any():
+                axis.plot(x_um, curve, color=colors[index % len(colors)], linestyle=linestyles[(index // len(colors)) % len(linestyles)], linewidth=2.0, alpha=0.85, label=cell.ids["cell"])
+        axis.plot(x_um, mean_curve, color="#111111", linewidth=3.0, label="Mean peak-normalized Intra", zorder=10)
+        _style_axis(axis)
+        _finish_single_axis(
+            fig, axis, path,
+            xlim=(0.0, min(0.5, float(edges_um[-1]))) if zoom else (edges_um[0], edges_um[-1]),
+            title="Zoom: 0–0.5 μm" if zoom else "Full range",
+            ylabel="Intra density / cell positive peak", suptitle=title, legend=zoom,
+        )
 
 
 def _build_peak_normalized_all_cell_intra_figure(
