@@ -9,6 +9,12 @@ import numpy as np
 
 from tardis_tau1 import Tau1Config, aggregate_genotype, analyze_cell, run_batch
 from tardis_tau1.core import CellResult, pair_histogram
+from tardis_tau1.matio import load_v73_cell_record
+
+try:
+    import h5py
+except ImportError:
+    h5py = None
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -56,7 +62,8 @@ class Tau1Tests(unittest.TestCase):
 
     def test_testpos2_regression(self) -> None:
         result = analyze_cell(
-            TEST_MAT, config=Tau1Config(bootstrap_count=0, save_plots=False)
+            TEST_MAT,
+            config=Tau1Config(n_bins=100, bootstrap_count=0, save_plots=False),
         )
         self.assertEqual(result.counts["localizations"], 189_590)
         self.assertEqual(result.counts["frames"], 2_500)
@@ -77,6 +84,40 @@ class Tau1Tests(unittest.TestCase):
             places=16,
         )
         self.assertLess(result.qc["metrics"]["reconstruction_error"], 1e-15)
+
+    @unittest.skipUnless(h5py is not None, "h5py is not installed")
+    def test_v73_base_record_si_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.mat"
+            self._write_v73_fixture(path)
+            positions, metadata = load_v73_cell_record(
+                path,
+                "WT_Miro1_T1",
+                frame_interval_s=0.02,
+                pixel_size_m=117e-9,
+            )
+            np.testing.assert_array_equal(positions[:, 0], [200, 201, 202])
+            np.testing.assert_allclose(
+                positions[:, 1:],
+                np.array([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]) * 117e-9,
+            )
+            self.assertEqual(metadata["record_variant"], "base")
+            self.assertEqual(metadata["input_coordinate_unit"], "pixel")
+            self.assertEqual(metadata["analysis_coordinate_unit"], "m")
+            self.assertAlmostEqual(metadata["frame_interval_s"], 0.02)
+
+    @unittest.skipUnless(h5py is not None, "h5py is not installed")
+    def test_v73_rejects_filtered_record_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.mat"
+            self._write_v73_fixture(path)
+            with self.assertRaisesRegex(ValueError, "unfiltered Base record"):
+                load_v73_cell_record(
+                    path,
+                    "WT_Miro1_T1_SpotsMaskFiltered",
+                    frame_interval_s=0.02,
+                    pixel_size_m=117e-9,
+                )
 
     def test_batch_single_cell_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -116,6 +157,55 @@ class Tau1Tests(unittest.TestCase):
             self.assertTrue(
                 (output / "genotypes/WT/Trak1/G1/genotype_result.npz").is_file()
             )
+            csv_path = output / "cells/WT/Trak1/G1/R1/C1/distributions.csv"
+            with csv_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertIn("distance_left_m", rows[0])
+            self.assertIn("total_count", rows[0])
+            self.assertIn("inter_background_count", rows[0])
+            self.assertIn("inter_expected_count", rows[0])
+            self.assertIn("intra_expected_count", rows[0])
+            first_cell = result.cell_results[0]
+            self.assertEqual(
+                int(rows[0]["total_count"]), first_cell.counts["total_histogram"][0]
+            )
+            self.assertAlmostEqual(
+                float(rows[0]["total_probability"]),
+                first_cell.distributions["total"][0],
+            )
+            self.assertAlmostEqual(
+                float(rows[0]["inter_expected_count"])
+                + float(rows[0]["intra_expected_count"]),
+                float(rows[0]["total_count"]),
+                places=8,
+            )
+
+    @staticmethod
+    def _write_v73_fixture(path: Path) -> None:
+        assert h5py is not None
+        with h5py.File(path, "w") as handle:
+            refs = handle.create_group("#refs#")
+            records = []
+            for index, name in enumerate(
+                [
+                    "WT_Miro1_T1",
+                    "WT_Miro1_T1_SpotsMaskFiltered",
+                    "WT_Miro1_T1_TracksFiltered",
+                ]
+            ):
+                record = refs.create_group(f"record_{index}")
+                record.create_dataset(
+                    "name",
+                    data=np.asarray([[ord(char) for char in name]], dtype=np.uint16),
+                )
+                record.create_dataset("time", data=np.array([[4.00, 4.02, 4.04]]))
+                record.create_dataset("x_data", data=np.array([[1.0, 2.0, 3.0]]))
+                record.create_dataset("y_data", data=np.array([[4.0, 5.0, 6.0]]))
+                metadata = record.create_group("tracksMetaData")
+                metadata.create_dataset("frameInterval", data=np.array([[0.02]]))
+                records.append(record.ref)
+            data = handle.create_dataset("data", (1, len(records)), dtype=h5py.ref_dtype)
+            data[0, :] = records
 
     @staticmethod
     def _fake_cell(

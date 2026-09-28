@@ -9,13 +9,13 @@ class Tau1Config:
 
     tau_frames: int = 1
     max_distance_m: float = 3e-6
-    n_bins: int = 100
+    n_bins: int = 300
     min_distance_background_fit: float = 0.7
     chunk_size: int = 256
     bootstrap_count: int = 2_000
     bootstrap_seed: int = 1_729
     save_plots: bool = True
-    schema_version: str = "tau1-distributions-v1"
+    schema_version: str = "tau1-cell-v3"
     zero_distance_policy: str = "legacy_remove_all"
 
     def __post_init__(self) -> None:
