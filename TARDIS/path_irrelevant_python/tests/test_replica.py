@@ -20,6 +20,8 @@ from tardis_tau1.matio import V73BaseRecord, load_v73_base_records
 from tardis_tau1.outputs import (
     _build_all_cell_intra_figure,
     _build_distribution_figure,
+    _build_peak_normalized_all_cell_intra_figure,
+    _peak_normalized_intra_curves,
     save_replica_result,
 )
 
@@ -233,6 +235,12 @@ class ReplicaAggregationTests(unittest.TestCase):
             self.assertTrue((output / "replica_summary.csv").is_file())
             self.assertTrue((output / "replica_distribution.png").is_file())
             self.assertTrue((output / "all_cell_intra.png").is_file())
+            self.assertTrue(
+                (output / "all_cell_intra_peak_normalized.png").is_file()
+            )
+            self.assertTrue(
+                (output / "cell_peak_normalized_shape_summary.csv").is_file()
+            )
             for obsolete in (
                 "cell_balanced_distributions.csv",
                 "pair_weighted_distributions.csv",
@@ -261,15 +269,31 @@ class ReplicaAggregationTests(unittest.TestCase):
             axes[0].lines[2].get_ydata(),
             result.distributions["intra_contribution_density_um_inv"],
         )
+        self.assertEqual(len(axes[1].lines), 2)  # Intra plus the zero reference line.
+        np.testing.assert_allclose(
+            axes[1].lines[0].get_ydata(),
+            result.distributions["intra_contribution_density_um_inv"],
+        )
         intra_fig, intra_axes = _build_all_cell_intra_figure(result, cells)
         self.assertEqual(len(intra_axes), 2)
         self.assertEqual(
             intra_axes[0].get_ylabel(), "Intra contribution density (μm⁻¹)"
         )
+        normalized, peaks = _peak_normalized_intra_curves(cells)
+        self.assertTrue(np.all(peaks > 0))
+        np.testing.assert_allclose(normalized.max(axis=1), 1.0)
+        normalized_fig, normalized_axes = _build_peak_normalized_all_cell_intra_figure(
+            result, cells
+        )
+        self.assertEqual(len(normalized_axes), 2)
+        self.assertEqual(
+            normalized_axes[0].get_ylabel(), "Intra density / cell positive peak"
+        )
         import matplotlib.pyplot as plt
 
         plt.close(fig)
         plt.close(intra_fig)
+        plt.close(normalized_fig)
 
     @staticmethod
     def _cell(

@@ -8,21 +8,68 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 
 #### Added
 
-- Added bin-width-independent probability densities in μm⁻¹ while preserving every probability and count output.
-- Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and interpolated median summaries for cells and replicas.
-- Added full-range and 0–0.5 μm density panels to cell, replica, and all-cell Intra plots.
-- Added SHA-256 input fingerprints, full configuration, schema/package/Python versions, analysis runtime, Git commit, and dirty-state provenance.
+- Added biological-replica group aggregation for every `condition / target`
+  combination. Group means are the equal-weight mean of replica curves; cell
+  counts do not determine a replica's weight.
+- Added pointwise sample standard deviation (SD) and standard error of the mean
+  (SEM) across biological replicas for Total, Inter, and Intra contribution
+  densities.
+- Added `group_result.npz`, `group_result.json`, group summary CSVs, and group
+  figures for all three distributions.
+- Added Intra area-normalized (conditional probability-density) curves at the
+  cell, replica, group, and comparison levels. Each curve integrates to one
+  over the positive Intra mass used for normalization.
+- Added cell-level peak-normalized Intra overlays and shape summaries.
+- Added distribution mode, mean, and median summaries to area-normalized
+  comparison data and figures.
+- Added target-level condition comparisons in the fixed order `WT`, `TDK`,
+  `MDK`, plus condition-level comparisons of `Miro1`, `Miro2`, `TRAK1`, and
+  `TRAK2`.
+- Added generic input-directory discovery and the
+  `run_xinran_all_groups.py` batch entry point. It supports the active data
+  layout `input_root / target / condition / *.mat` without hard-coded file
+  names.
+- Added `run_xinran_group.py` for one target/condition and
+  `view_cells_6_7_timepoints.m` for MATLAB timepoint scatter inspection of
+  records 6 and 7.
+- Added group-analysis tests and expanded replica-output tests for the new
+  normalized figures.
+- Added bin-width-independent probability densities in μm⁻¹ while preserving
+  every probability and count output.
+- Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and
+  interpolated median summaries for cells and replicas.
+- Added full-range and 0–0.5 μm density panels to cell, replica, and all-cell
+  Intra plots.
+- Added SHA-256 input fingerprints, configuration, schema/package/Python
+  versions, analysis runtime, Git commit, and dirty-state provenance.
 - Added `replica_summary.csv` and provenance/summary scalars to NPZ output.
-- Added tests for density conversion and integrals, positive-Intra summaries, provenance, two-panel plots, and enhanced output round trips.
+- Added tests for density conversion and integrals, positive-Intra summaries,
+  provenance, two-panel plots, and enhanced output round trips.
 
 #### Changed
 
+- Replaced 95% t-confidence-interval shading in group plots with the requested
+  pointwise `mean ± 1 SD` band.
+- The 0–0.5 µm zoom panel of cell, replica, and group plots now shows only the
+  Intra curve; the full-range panel still shows Total, Inter, and Intra.
+- Increased primary curve line widths for clearer exported figures.
+- Standardized generated output under `TARDIS/results/` as
+  `target / condition / {replicas, group, comparison}` plus a
+  `condition_comparison/` directory. Earlier trial folders are retained only
+  as local, regenerable artifacts.
 - Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
-- Extended the README with probability-density definitions, positive-Intra metrics, provenance fields, and the enhanced output tree.
+- Extended the README with probability-density definitions, positive-Intra
+  metrics, provenance fields, and the enhanced output tree.
 
 #### Validation
 
-Revalidated `WT / Miro1 / 20251016_WT_Miro1_V7` after adding the derived outputs:
+- Re-ran the complete active dataset: 12 target/condition groups, 47 biological
+  replicas, and 539 included cells.
+- Generated all cell-, replica-, group-, target-comparison, and
+  condition-comparison PNG/CSV/NPZ outputs. The batch manifest is written to
+  `TARDIS/results/batch_summary.csv`.
+- Earlier in the same date's work, revalidated
+  `WT / Miro1 / 20251016_WT_Miro1_V7` after adding the derived outputs:
 
 | Metric | Result |
 |---|---:|

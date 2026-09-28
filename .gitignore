@@ -6,3 +6,13 @@ __pycache__/
 .pytest_cache/
 outputs/
 .claude/
+
+# macOS and Matplotlib runtime artifacts
+.DS_Store
+.mplconfig/
+
+# Regenerable TARDIS analysis artifacts
+TARDIS/analysis_output/
+TARDIS/group_analysis_output/
+TARDIS/results/
+TARDIS/reanalysis.log

@@ -60,6 +60,9 @@ def save_result(
     _write_distribution_csv(result, output_dir / "distributions.csv")
     if config.save_plots:
         _write_diagnostic_plot(result, output_dir / "diagnostic.png", level)
+        _write_intra_area_normalized_plot(
+            result, output_dir / "intra_area_normalized.png", level
+        )
 
 
 def save_replica_result(
@@ -106,6 +109,9 @@ def save_replica_result(
     _write_replica_distribution_csv(result, output_dir / "replica_distributions.csv")
     _write_cell_summary(result, cell_results, output_dir / "cell_summary.csv")
     _write_replica_summary(result, output_dir / "replica_summary.csv")
+    _write_peak_normalized_shape_summary(
+        result, cell_results, output_dir / "cell_peak_normalized_shape_summary.csv"
+    )
     cells_dir = output_dir / "cells"
     for cell in cell_results:
         save_result(cell, cells_dir / safe_component(cell.ids["cell"]), config, "cell")
@@ -121,8 +127,14 @@ def save_replica_result(
             path.unlink()
     if config.save_plots:
         _write_replica_plot(result, output_dir / "replica_distribution.png")
+        _write_intra_area_normalized_plot(
+            result, output_dir / "intra_area_normalized.png", "replica"
+        )
         _write_all_cell_intra_plot(
             result, cell_results, output_dir / "all_cell_intra.png"
+        )
+        _write_peak_normalized_all_cell_intra_plot(
+            result, cell_results, output_dir / "all_cell_intra_peak_normalized.png"
         )
 
 
@@ -330,6 +342,41 @@ def _write_replica_plot(result: ReplicaResult, path: Path) -> None:
     _close_figure(fig)
 
 
+def _write_intra_area_normalized_plot(
+    result: CellResult | ReplicaResult, path: Path, level: str
+) -> None:
+    """Save the signed Intra conditional density, whose area is one."""
+    plt = _pyplot()
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    density = np.asarray(result.distributions["intra_conditional_density_um_inv"])
+    fig, axes = plt.subplots(
+        1, 2, figsize=(12.0, 4.8), sharey=True, constrained_layout=True
+    )
+    for axis in axes:
+        axis.plot(x_um, density, color="#1baf7a", linewidth=3.2, label="Intra")
+        _style_axis(axis)
+        axis.set_xlabel("Distance (μm)")
+    axes[0].set_xlim(edges_um[0], edges_um[-1])
+    axes[0].set_ylabel("Area-normalized Intra density (μm⁻¹)")
+    axes[0].set_title("Full range")
+    zoom_max = min(0.5, float(edges_um[-1]))
+    axes[1].set_xlim(0, zoom_max)
+    axes[1].set_title(f"Zoom: 0–{zoom_max:g} μm")
+    axes[1].legend(frameon=False, loc="upper right")
+    summary = result.summaries.get("positive_intra", {})
+    subtitle = ""
+    if summary:
+        subtitle = (
+            f" · peak {summary['peak_distance_um'] * 1e3:.0f} nm"
+            f" · mean {summary['positive_weighted_mean_distance_um'] * 1e3:.0f} nm"
+            f" · median {summary['positive_weighted_median_distance_um'] * 1e3:.0f} nm"
+        )
+    fig.suptitle(f"{level.capitalize()} Intra · area normalized{subtitle}")
+    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
+    _close_figure(fig)
+
+
 def _build_distribution_figure(result: Any, title: str) -> tuple[Any, Any]:
     plt = _pyplot()
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
@@ -337,14 +384,15 @@ def _build_distribution_figure(result: Any, title: str) -> tuple[Any, Any]:
     fig, axes = plt.subplots(
         1, 2, figsize=(12.0, 4.8), sharey=True, constrained_layout=True
     )
+    _plot_distributions(axes[0], x_um, result.distributions)
+    _plot_intra_distribution(axes[1], x_um, result.distributions)
     for ax in axes:
-        _plot_distributions(ax, x_um, result.distributions)
         ax.set_xlabel("Distance (μm)")
     axes[0].set_xlim(edges_um[0], edges_um[-1])
     axes[0].set_title("Full range")
     zoom_max = min(0.5, float(edges_um[-1]))
     axes[1].set_xlim(0.0, zoom_max)
-    axes[1].set_title(f"Zoom: 0–{zoom_max:g} μm")
+    axes[1].set_title(f"Zoom: 0–{zoom_max:g} μm · Intra only")
     axes[0].set_ylabel("Probability density (μm⁻¹)")
     axes[1].legend(frameon=False, loc="upper right")
     fig.suptitle(title, y=1.02)
@@ -377,7 +425,7 @@ def _build_all_cell_intra_figure(
                 cell.distributions["intra_contribution_density_um_inv"],
                 color=colors[index % len(colors)],
                 linestyle=linestyles[(index // len(colors)) % len(linestyles)],
-                linewidth=1.25,
+                linewidth=2.0,
                 alpha=0.85,
                 label=cell.ids["cell"],
             )
@@ -413,12 +461,145 @@ def _build_all_cell_intra_figure(
     return fig, axes
 
 
+def _write_peak_normalized_all_cell_intra_plot(
+    result: ReplicaResult, cell_results: list[CellResult], path: Path
+) -> None:
+    fig, _ = _build_peak_normalized_all_cell_intra_figure(result, cell_results)
+    fig.savefig(path, dpi=180, facecolor="white", bbox_inches="tight")
+    _close_figure(fig)
+
+
+def _build_peak_normalized_all_cell_intra_figure(
+    result: ReplicaResult, cell_results: list[CellResult]
+) -> tuple[Any, Any]:
+    """Plot signed Intra curves after scaling each cell's positive peak to one."""
+    plt = _pyplot()
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    normalized, _ = _peak_normalized_intra_curves(cell_results)
+    mean_curve = np.nanmean(normalized, axis=0)
+    fig, axes = plt.subplots(
+        1, 2, figsize=(14.0, 5.8), sharey=True, constrained_layout=True
+    )
+    colors = plt.get_cmap("tab10").colors
+    linestyles = ("-", "--", "-.", ":")
+    for ax in axes:
+        for index, (cell, curve) in enumerate(zip(cell_results, normalized)):
+            if not np.isfinite(curve).any():
+                continue
+            ax.plot(
+                x_um,
+                curve,
+                color=colors[index % len(colors)],
+                linestyle=linestyles[(index // len(colors)) % len(linestyles)],
+                linewidth=2.0,
+                alpha=0.85,
+                label=cell.ids["cell"],
+            )
+        ax.plot(
+            x_um,
+            mean_curve,
+            color="#111111",
+            linewidth=3.0,
+            label="Mean peak-normalized Intra",
+            zorder=10,
+        )
+        _style_axis(ax)
+        ax.set_xlabel("Distance (μm)")
+    axes[0].set_xlim(edges_um[0], edges_um[-1])
+    axes[0].set_title("Full range")
+    zoom_max = min(0.5, float(edges_um[-1]))
+    axes[1].set_xlim(0.0, zoom_max)
+    axes[1].set_title(f"Zoom: 0–{zoom_max:g} μm")
+    axes[0].set_ylabel("Intra density / cell positive peak")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        frameon=False,
+        bbox_to_anchor=(1.01, 0.5),
+        loc="center left",
+        fontsize=8,
+    )
+    fig.suptitle(
+        f"{result.ids['condition']} · {result.ids['target']} · "
+        f"{result.ids['replicate']} · tau=1 · peak-normalized Intra"
+    )
+    return fig, axes
+
+
+def _peak_normalized_intra_curves(
+    cell_results: list[CellResult],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return signed curves normalized by their positive maxima and those maxima."""
+    raw = np.asarray(
+        [
+            cell.distributions["intra_contribution_density_um_inv"]
+            for cell in cell_results
+        ],
+        dtype=float,
+    )
+    peaks = np.max(raw, axis=1)
+    normalized = np.full_like(raw, np.nan)
+    valid = peaks > 0
+    normalized[valid] = raw[valid] / peaks[valid, np.newaxis]
+    return normalized, peaks
+
+
+def _write_peak_normalized_shape_summary(
+    result: ReplicaResult, cell_results: list[CellResult], path: Path
+) -> None:
+    """Write reproducible shape-comparison metrics for peak-normalized curves."""
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    normalized, peaks = _peak_normalized_intra_curves(cell_results)
+    zoom_mask = x_um <= min(0.5, float(x_um[-1]))
+    fields = [
+        "cell_id",
+        "positive_peak_density_um_inv",
+        "peak_distance_um",
+        "shape_window_um",
+        "pearson_correlation_to_leave_one_out_mean_peak_normalized_curve",
+        "rmse_to_leave_one_out_mean_peak_normalized_curve",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for index, (cell, curve, peak) in enumerate(
+            zip(cell_results, normalized, peaks)
+        ):
+            window = curve[zoom_mask]
+            other_curves = np.delete(normalized, index, axis=0)
+            reference = np.nanmean(other_curves, axis=0)[zoom_mask]
+            finite = np.isfinite(window) & np.isfinite(reference)
+            correlation = float("nan")
+            rmse = float("nan")
+            if finite.any():
+                rmse = float(np.sqrt(np.mean((window[finite] - reference[finite]) ** 2)))
+            if (
+                finite.sum() >= 2
+                and np.std(window[finite]) > 0
+                and np.std(reference[finite]) > 0
+            ):
+                correlation = float(np.corrcoef(window[finite], reference[finite])[0, 1])
+            peak_index = int(np.argmax(curve)) if np.isfinite(curve).any() else -1
+            writer.writerow(
+                {
+                    "cell_id": cell.ids["cell"],
+                    "positive_peak_density_um_inv": peak,
+                    "peak_distance_um": "" if peak_index < 0 else x_um[peak_index],
+                    "shape_window_um": 0.5,
+                    "pearson_correlation_to_leave_one_out_mean_peak_normalized_curve": correlation,
+                    "rmse_to_leave_one_out_mean_peak_normalized_curve": rmse,
+                }
+            )
+
+
 def _plot_distributions(ax: Any, x_um: np.ndarray, d: dict[str, Any]) -> None:
     ax.plot(
         x_um,
         d["total_density_um_inv"],
         color="#2a78d6",
-        linewidth=2.0,
+        linewidth=3.0,
         label="Total",
     )
     ax.plot(
@@ -429,6 +610,19 @@ def _plot_distributions(ax: Any, x_um: np.ndarray, d: dict[str, Any]) -> None:
         linestyle="--",
         label="Inter contribution",
     )
+    ax.plot(
+        x_um,
+        d["intra_contribution_density_um_inv"],
+        color="#1baf7a",
+        linewidth=2.0,
+        linestyle="-.",
+        label="Intra contribution",
+    )
+    _style_axis(ax)
+
+
+def _plot_intra_distribution(ax: Any, x_um: np.ndarray, d: dict[str, Any]) -> None:
+    """Plot only signed Intra in zoom panels used for cell and replica QC."""
     ax.plot(
         x_um,
         d["intra_contribution_density_um_inv"],

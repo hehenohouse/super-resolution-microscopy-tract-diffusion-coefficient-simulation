@@ -192,6 +192,43 @@ Options:
 --no-plot
 ```
 
+## Running a group of biological replicas
+
+Use `run_xinran_group.py` to analyze multiple MAT replicas with the same
+condition and target. Each MAT file is first aggregated as an equal-cell
+replica; the group result then gives each biological replica equal weight.
+The group-level output reports sample SD and SEM across replicas, never across
+pooled cells. The plotted error band is mean ± 1 SD.
+
+```bash
+PYTHONPATH=path_irrelevant_python \
+python path_irrelevant_python/run_xinran_group.py \
+  --condition MDK --target Miro1 \
+  --output group_output/MDK_Miro1 \
+  --input /path/to/20251016_mdk_Miro1_V7.mat \
+  --input /path/to/20251023_mdk_Miro1_V7.mat \
+  --input /path/to/20251106_mdk_Miro1_V7.mat
+```
+
+The `group/` output folder contains `group_mean_distributions.png` with
+Total, Inter, and Intra means and SD bands; `replica_intra_overlay.png`;
+bin-wise CSV data; scalar Intra summaries; and portable JSON/NPZ results.
+
+## Batch-running every Miro and TRAK condition
+
+To scan the standard `Miro1`, `Miro2`, `TRAK1`, and `TRAK2` folders and run
+each WT, TDK, and MDK group independently:
+
+```bash
+PYTHONPATH=path_irrelevant_python \
+python path_irrelevant_python/run_xinran_all_groups.py \
+  --input-root /path/to/Xinran_ComparisonData \
+  --output-root all_group_output
+```
+
+`batch_summary.csv` reports the included replica and cell counts, output path,
+and any group-level failure without stopping the remaining groups.
+
 ## Project directory
 
 ```text
