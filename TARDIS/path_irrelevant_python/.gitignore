@@ -5,3 +5,7 @@ dist/
 build/
 *.egg-info/
 example_output*/
+
+pilot_output*/
+
+replica_output*/

@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("manifest", help="CSV manifest with one row per cell")
     parser.add_argument("output", help="Output directory")
     parser.add_argument("--max-distance-um", type=float, default=3.0)
-    parser.add_argument("--bins", type=int, default=100)
+    parser.add_argument("--bins", type=int, default=300)
     parser.add_argument("--background-tail-start", type=float, default=0.7)
     parser.add_argument("--chunk-size", type=int, default=256)
     parser.add_argument("--bootstrap-count", type=int, default=2_000)

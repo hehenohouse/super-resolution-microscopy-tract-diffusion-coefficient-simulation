@@ -1,100 +1,157 @@
 # Changelog
 
-All notable changes to the Python tau=1 distribution pipeline are documented here.
+All notable changes to the Python τ=1 distribution pipeline are documented here.
+
+## [Unreleased]
+
+### Added
+
+- Added MATLAB v7.3/HDF5 input support through `h5py`.
+- Added one-pass discovery of all unfiltered Base records in one MAT replica.
+- Added SI calibration for Xinran data: `0.02 s/frame`, `117e-9 m/pixel`, and distance output in metres.
+- Added one-cell and complete-replica Xinran runners.
+- Added constrained beta fitting while preserving `beta_raw` and clipping status:
+
+  ```text
+  beta = clip(beta_raw, 0, 1)
+  ```
+
+- Added raw Total and same-frame background histogram counts to cell NPZ and CSV output.
+- Added Total-scale expected Inter and Intra counts to cell CSV output.
+- Added canonical equal-cell replica aggregation:
+
+  ```text
+  Total_rep = mean(T_c)
+  Inter_rep = mean(beta_c × B_c)
+  Intra_rep = mean(Intra_c)
+  beta_rep  = mean(beta_c)
+  ```
+
+- Added replica JSON, NPZ, CSV, cell-summary, and diagnostic outputs.
+- Added `all_cell_intra.png`, showing every valid cell's unmodified Intra contribution and the equal-cell replica mean.
+- Added `cell_ids` and `cell_intra_contributions` to replica NPZ output.
+- Added bin-width-independent probability densities in μm⁻¹ while preserving every probability and count output.
+- Added positive-Intra peak, mass, 0–300 nm mass, weighted mean, and interpolated median summaries for cells and replicas.
+- Added full-range and 0–0.5 μm density panels to cell, replica, and all-cell Intra plots.
+- Added SHA-256 input fingerprints, full configuration, schema/package/Python versions, analysis runtime, Git commit, and dirty-state provenance.
+- Added `replica_summary.csv` and provenance/summary scalars to NPZ output.
+- Added tests for Base discovery, malformed/duplicate records, beta constraints, exact equal-cell aggregation, pair-count conservation, densities, positive-Intra summaries, provenance, plots, and output round trips.
+
+### Changed
+
+- Corrected the active hierarchy to:
+
+  ```text
+  condition → target → replica (one MAT file) → cells
+  ```
+
+- Defined active conditions as WT, TDK, and MDK.
+- Removed `genotype` from the active Xinran replica schema; the older genotype manifest remains only as a legacy workflow.
+- Standardized the canonical replica result on equal-cell weighting.
+- Changed the default histogram from 100 bins (30 nm/bin) to 300 bins (10 nm/bin) while retaining the 3 μm maximum distance and 2.1–3.0 μm beta-fit tail.
+- Removed the experimental pair-weighted replica decomposition after first-replica review.
+- Retained per-cell raw pair counts for QC without using them to weight the replica distribution.
+- Replaced the former dual-aggregation files with `replica_distributions.csv`, `replica_distribution.png`, and `all_cell_intra.png`.
+- Preserved signed negative Intra bins instead of clipping them.
+- Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
+- Rewrote the README around the active Xinran workflow and documented current project/output directory structures.
+
+### Removed
+
+The active replica output no longer produces:
+
+- `pair_weighted_distributions.csv`;
+- `cell_balanced_distributions.csv`;
+- `mode_comparison.json`;
+- `aggregation_comparison.png`;
+- pair-weighted replica beta or pair-concentration interpretation.
+
+### Validation
+
+#### One-cell pilot
+
+Validated `C2-101625_WT_Miro1_T1`:
+
+| Metric | Result |
+|---|---:|
+| Localizations | 200,576 |
+| Frames | 2,300 |
+| Time range | 4.00–49.98 s |
+| Total retained pairs | 872,352 |
+| Background retained pairs | 700,172 |
+| Beta | 0.8012321630849819 |
+| Negative Intra bins | 134 |
+
+Expected-count reconstruction was verified to approximately `7.3e-12` pairs.
+
+#### First complete replica
+
+Validated `WT / Miro1 / 20251016_WT_Miro1_V7`:
+
+| Metric | Result |
+|---|---:|
+| Discovered Base cells | 10 |
+| Included cells | 10 |
+| Excluded cells | 0 |
+| Total candidate pairs | 234,361,315 |
+| Total retained pairs | 10,103,360 |
+| Background candidate pairs | 234,848,099 |
+| Background retained pairs | 8,584,250 |
+| Equal-cell replica beta | 0.830216531615378 |
+| Reconstruction error | 6.94e-18 |
+| Negative Intra bins | 134 |
+| Positive Intra peak | 0.055 μm |
+| Positive Intra mass | 0.1745450818 |
+| Positive Intra mass, 0–300 nm | 0.1650372922 |
+| Positive-weighted mean distance | 0.1463261920 μm |
+| Positive-weighted median distance | 0.0913423954 μm |
+
+Density integrals recover Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684. All 10 cells share the same MAT SHA-256, beginning `765effd0a438`; the run recorded commit `fc2b3306c99aa4ec25f2a01b478a22de36891ac7` with a dirty working tree.
+
+With the 10 nm histogram, the saved `cell_intra_contributions` array has shape `10 × 300`, and its binwise mean equals the saved replica Intra contribution exactly.
+
+- Compared with the 30 nm baseline, beta changed by `-0.0003605`; negative Intra mass increased from `0.003586` to `0.004762` as the narrower bins exposed more binwise residual variation.
+- Confirmed that all 21 tests pass.
+- Rendered and inspected the full-range/zoom versions of cell `diagnostic.png`, `replica_distribution.png`, and `all_cell_intra.png`.
 
 ## [0.1.0] - 2026-09-23
 
 ### Added
 
-- Added a Python implementation of the first TARDIS/DANAE analysis milestone under `path_irrelevant_python/`.
-- Added tau=1-frame analysis for one localization cell at a time.
-- Added Total JPP construction from all frame `f` to frame `f+1` localization pairs.
+- Added the initial Python implementation under `path_irrelevant_python/`.
+- Added τ=1 Total construction from all frame `f` to frame `f+1` localization pairs.
 - Added a DANAE-like Inter background from ordered same-frame localization pairs.
-- Added legacy-compatible removal of all exact-zero same-frame distances.
-- Added tail-based Inter scaling using the final 30% of histogram bins.
-- Added the three primary contribution outputs:
-  - `Total`
-  - `InterContribution`
-  - `IntraContribution`
-- Added normalized `InterConditional` and `IntraConditional` distributions.
-- Added an explicit binwise reconstruction guarantee:
+- Added legacy-compatible removal of every exact-zero same-frame distance.
+- Added tail-based Inter scaling over the final 30% of histogram bins.
+- Added Total, Inter contribution, and residual Intra contribution outputs.
+- Added exact binwise reconstruction:
 
   ```text
   Total = InterContribution + IntraContribution
   ```
 
-- Added QC reporting for:
-  - negative Intra bins;
-  - negative Intra mass;
-  - background fractions outside `[0, 1]`;
-  - missing frames;
-  - coincident same-frame detections;
-  - sparse background tails;
-  - normalization and reconstruction errors.
-- Added a dependency-light MATLAB v5 MAT-file reader, allowing `testPos2.mat` to be read without SciPy.
-- Added chunked NumPy pair-distance histogram accumulation to avoid storing all pair distances.
-- Added CSV manifest-driven batch processing with one row per cell.
-- Added hierarchical identifiers for condition, target, genotype, biological replicate, and cell.
-- Added equal-cell-weight genotype aggregation without pooling coordinates across cells.
-- Added replicate-stratified cell bootstrap support for genotype-level confidence intervals.
-- Added portable output formats:
-  - compressed NumPy `.npz` arrays;
-  - JSON metadata and QC;
-  - CSV distributions and cell summaries;
-  - PNG diagnostic plots.
-- Added a command-line interface through `python -m tardis_tau1.cli`.
-- Added an example manifest and usage documentation.
-- Added unit, regression, aggregation, and batch round-trip tests.
+- Added QC for negative Intra bins/mass, missing frames, coincident detections, sparse tails, normalization, and reconstruction.
+- Added a dependency-light MATLAB v5 numeric MAT reader.
+- Added chunked NumPy pair-distance histogram accumulation.
+- Added the original CSV manifest batch workflow and equal-cell genotype aggregation.
+- Added NPZ, JSON, CSV, and PNG outputs.
+- Added the original command-line interface and regression tests.
 
-### Validated
+### Validation
 
-- Ran the Python pipeline successfully on `testPos2.mat`.
-- Reproduced the postdoc MATLAB distribution logic with the following regression values:
+Validated `testPos2.mat` against the postdoc MATLAB logic:
 
-  | Metric | Value |
-  |---|---:|
-  | Localizations | 189,590 |
-  | Frames | 2,500 |
-  | Total candidate pairs | 16,370,405 |
-  | Total retained pairs | 520,113 |
-  | Inter candidate pairs | 16,477,456 |
-  | Inter zero distances removed | 189,632 |
-  | Inter retained pairs | 425,388 |
-  | Background fraction β | 0.8177098334831252 |
-  | Intra fraction | 0.1822901665168748 |
-  | Negative Intra bins | 40 |
-  | Minimum Intra contribution | -0.0006306613549036041 |
+| Metric | Result |
+|---|---:|
+| Localizations | 189,590 |
+| Frames | 2,500 |
+| Total candidate pairs | 16,370,405 |
+| Total retained pairs | 520,113 |
+| Inter candidate pairs | 16,477,456 |
+| Inter zero distances removed | 189,632 |
+| Inter retained pairs | 425,388 |
+| Beta | 0.8177098334831255 |
+| Negative Intra bins | 40 |
+| Minimum Intra contribution | -0.0006306613549036076 |
 
-- Confirmed that Python and MATLAB results agree to floating-point precision.
-- Confirmed that all four Python tests pass.
-- Rendered and inspected both cell-level and genotype-level diagnostic plots.
-
-### Output structure
-
-```text
-output/
-  cells/<condition>/<target>/<genotype>/<replicate>/<cell>/
-    cell_result.npz
-    cell_result.json
-    distributions.csv
-    diagnostic.png
-  genotypes/<condition>/<target>/<genotype>/
-    genotype_result.npz
-    genotype_result.json
-    distributions.csv
-    cell_summary.csv
-    diagnostic.png
-  failures.csv
-```
-
-### Current limitations
-
-- Only `tau_frames = 1` is supported.
-- State switching and changing-state kinetics are not fitted.
-- Diffusion coefficients and multi-population Brownian models are not fitted yet.
-- Bleaching kinetics are not estimated from a single lag.
-- Motion-blur correction is not needed or implemented at this distribution-only stage.
-- MATLAB v7.3/HDF5 MAT files are not supported by the dependency-free MAT reader.
-- Negative Intra bins are retained as diagnostic information rather than clipped.
-- A genotype containing only one cell produces a point estimate but no interpretable biological confidence interval.
-- The example `testPos2.mat` output uses `UNASSIGNED` metadata because genotype and target labels are not contained in the MAT file.
+Python and MATLAB agreed to floating-point precision.
