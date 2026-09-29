@@ -36,3 +36,17 @@ class Tau1Config:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+    def analysis_identity(self) -> dict[str, object]:
+        """Return only fields that determine canonical scientific results."""
+        values = self.to_dict()
+        return {
+            key: values[key]
+            for key in (
+                "tau_frames",
+                "max_distance_m",
+                "n_bins",
+                "min_distance_background_fit",
+                "zero_distance_policy",
+            )
+        }

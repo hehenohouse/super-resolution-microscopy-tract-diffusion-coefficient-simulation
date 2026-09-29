@@ -1,4 +1,4 @@
-"""Add area-normalized Intra plots to already-saved TARDIS cell/replica results."""
+"""Plot saved signed Intra densities normalized by their net mass."""
 from __future__ import annotations
 
 import argparse
@@ -37,9 +37,9 @@ def main() -> None:
             axis.set_xlabel("Distance (μm)")
             axis.set_xlim(0, min(0.5, edges[-1])) if zoom else axis.set_xlim(edges[0], edges[-1])
             axis.set_title("Zoom: 0–0.5 μm" if zoom else "Full range")
-            axis.set_ylabel("Area-normalized Intra density (μm⁻¹)")
+            axis.set_ylabel("Signed-net-mass-normalized Intra density (μm⁻¹)")
             level = "Replica" if archive.name.startswith("replica") else "Cell"
-            fig.suptitle(f"{level} Intra · area normalized")
+            fig.suptitle(f"{level} Intra · signed net mass normalized")
             fig.savefig(destination, dpi=180, facecolor="white", bbox_inches="tight")
             plt.close(fig)
 

@@ -17,8 +17,9 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Added `group_result.npz`, `group_result.json`, group summary CSVs, and group
   figures for all three distributions.
 - Added Intra area-normalized (conditional probability-density) curves at the
-  cell, replica, group, and comparison levels. Each curve integrates to one
-  over the positive Intra mass used for normalization.
+  cell, replica, group, and comparison levels. Each signed curve is divided by
+  its net Intra mass (`1 - beta`), integrates to one, and retains negative bins;
+  positive Intra mass remains a separate summary quantity.
 - Added cell-level peak-normalized Intra overlays and shape summaries.
 - Added distribution mode, mean, and median summaries to area-normalized
   comparison data and figures.
@@ -47,6 +48,15 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Added `replica_summary.csv` and provenance/summary scalars to NPZ output.
 - Added tests for density conversion and integrals, positive-Intra summaries,
   provenance, two-panel plots, and enhanced output round trips.
+- Added group schema `tau1-group-replica-balanced-v2` with ordered replica
+  hashes, shared config/calibration, source environments, and strict rejection
+  of incompatible or duplicate biological-replica inputs.
+- Added separate `replica_metric_summary.csv` and
+  `group_mean_curve_summary.csv` outputs so mean-of-replica metrics cannot be
+  confused with metrics calculated from the displayed group mean curve.
+- Added SHA-256/config-driven replica resume manifests, atomic completion,
+  strict result/artifact validation, legacy v4 adoption, cache counts in the
+  batch summary, and `--force-recompute`.
 
 #### Changed
 
@@ -64,6 +74,15 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Updated schemas to `tau1-cell-v3` and `tau1-replica-cell-balanced-v4`.
 - Extended the README with probability-density definitions, positive-Intra
   metrics, provenance fields, and the enhanced output tree.
+- Corrected area-normalization terminology to signed net Intra mass and added
+  explicit rejection of incompatible distance grids or invalid normalization
+  denominators in comparison outputs.
+- Corrected the group-runner description from t-based uncertainty to the actual
+  equal-replica sample SD/SEM and mean ± 1 SD plot bands.
+- Unified comparison medians with the canonical within-bin interpolation used
+  by positive-Intra summaries, including nonuniform histogram bins.
+- Group runners now hash each MAT file once, reuse validated replica results,
+  and always regenerate group/comparison derivatives from current code.
 
 #### Removed
 
@@ -95,7 +114,8 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 - Density integrals recover Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684.
 - All 10 cells share the same MAT SHA-256, beginning `765effd0a438`; the validation run recorded commit `fc2b3306c99aa4ec25f2a01b478a22de36891ac7` with a dirty working tree.
 - Confirmed that the enhanced scientific arrays are identical to the preceding 10 nm output.
-- Confirmed that all 21 tests pass.
+- Confirmed that all 35 tests pass, including direct comparison, cache,
+  strict group compatibility, and input-discovery coverage.
 - Rendered and inspected the full-range/zoom versions of cell `diagnostic.png`, `replica_distribution.png`, and `all_cell_intra.png`.
 
 ### 2026-09-27
