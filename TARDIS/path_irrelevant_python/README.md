@@ -145,7 +145,9 @@ For interpretation, each cell and replica also receives a `positive_intra` summa
 
 ## Reproducibility provenance
 
-Cell and replica JSON results record the complete configuration, input SHA-256 and byte size, analysis runtime, schema version, package version, Python version, Git commit, and Git dirty state. One MAT replica is fingerprinted once and that identity is shared by all of its Base cells. Git or installed-package metadata may be `null` when unavailable; missing provenance never prevents scientific analysis. Output serialization time is excluded from the recorded analysis runtime.
+Cell and replica JSON results record the complete configuration, input SHA-256 and byte size, analysis runtime, schema version, package version, Python version, Git commit, and Git dirty state. One MAT replica is fingerprinted once and that identity is shared by all of its Base cells. Git or installed-package metadata may be `null` when unavailable; missing environment metadata never prevents scientific analysis. Output serialization time is excluded from the recorded analysis runtime.
+
+Group schema `tau1-group-replica-balanced-v2` records the ordered replica input hashes, shared analysis configuration and calibration, each source replica's environment, and the group-generation environment. Group aggregation rejects mixed schemas, scientific configurations, calibrations, bin grids, duplicate replica IDs, and duplicate input hashes before averaging.
 
 ## Running one Base cell
 
@@ -198,7 +200,13 @@ Use `run_xinran_group.py` to analyze multiple MAT replicas with the same
 condition and target. Each MAT file is first aggregated as an equal-cell
 replica; the group result then gives each biological replica equal weight.
 The group-level output reports sample SD and SEM across replicas, never across
-pooled cells. The plotted error band is mean ± 1 SD.
+pooled cells. The plotted error band is mean ± 1 SD. Two summary scopes are
+saved separately: `replica_metric_summary.csv` calculates each nonlinear metric
+per replica and then summarizes those values, while
+`group_mean_curve_summary.csv` calculates metrics once from the equal-replica
+group mean curve. The legacy `group_summary.csv` remains an alias of the
+replica-metric table. Medians in both scopes are linearly interpolated within
+the crossing bin.
 
 ```bash
 PYTHONPATH=path_irrelevant_python \
@@ -228,8 +236,17 @@ python path_irrelevant_python/run_xinran_all_groups.py \
   --output-root all_group_output
 ```
 
-`batch_summary.csv` reports the included replica and cell counts, output path,
-and any group-level failure without stopping the remaining groups.
+`batch_summary.csv` reports the included replica and cell counts, cache-hit and
+computed-replica counts, output path, and any group-level failure without
+stopping the remaining groups.
+
+Both group runners resume by default. Each MAT file is SHA-256 hashed and reused
+only when its input content, IDs, scientific configuration, calibration, schema,
+result checksums, and required artifacts match `replica_cache.json`. The
+completion manifest is written atomically after all replica outputs succeed;
+mtime alone is never accepted as input identity. Use `--force-recompute` to
+bypass cache reads. Replica caches may be reused, but group and comparison
+outputs are always regenerated from the current code.
 
 ## Comparison figures
 
@@ -240,8 +257,10 @@ WT, TDK, and MDK (three sets). Each set writes:
 - `*_intra_contribution_full_range.png` and `*_intra_contribution_zoom_0p5um.png`:
   signed Intra contribution density, retaining amplitude and Intra-mass differences;
 - `*_intra_area_normalized_full_range.png` and
-  `*_intra_area_normalized_zoom_0p5um.png`: conditional Intra densities whose
-  biological-replica curves each integrate to one, for area-normalized shape comparison;
+  `*_intra_area_normalized_zoom_0p5um.png`: conditional signed Intra densities.
+  Each biological-replica curve is divided by its net signed Intra mass
+  (`1 - beta`), so its signed integral is one while negative bins remain unchanged
+  in sign. This is not normalization by positive Intra mass;
 - `*_intra_peak_normalized_zoom_0p5um.png`: zoom-only curves where each
   biological replica's positive Intra peak is set to one before calculating
   mean ± 1 SD. This is the peak-normalized shape comparison.
@@ -263,7 +282,8 @@ path_irrelevant_python/
 │   ├── config.py             # τ=1 parameters and validation
 │   ├── matio.py              # MATLAB v5 and v7.3 readers
 │   ├── core.py               # cell analysis and replica aggregation
-│   ├── outputs.py            # JSON/NPZ/CSV/PNG serialization
+│   ├── outputs.py            # JSON/NPZ/CSV/PNG serialization and loading
+│   ├── cache.py              # SHA-256/config-driven replica resume manifests
 │   ├── provenance.py         # hashes, versions, runtime, and Git state
 │   ├── batch.py              # legacy manifest/genotype workflow
 │   └── cli.py                # legacy manifest CLI
@@ -282,6 +302,7 @@ replica_output/
         └── <replica>/
             ├── replica_result.json
             ├── replica_result.npz
+            ├── replica_cache.json
             ├── replica_distributions.csv
             ├── cell_summary.csv
             ├── replica_summary.csv
@@ -385,7 +406,7 @@ $env:PYTHONPATH = "path_irrelevant_python"
 python -m unittest discover -s path_irrelevant_python/tests -v
 ```
 
-The current suite contains 21 tests covering pair semantics, MATLAB readers, SI conversion, beta constraints, equal-cell aggregation, density integration, positive-Intra summaries, provenance, two-panel plots, output round trips, and the `testPos2.mat` regression.
+The current suite contains 35 tests covering pair semantics, MATLAB readers, SI conversion, beta constraints, equal-cell and equal-replica aggregation, strict group compatibility, scoped group metrics, density integration, interpolated positive-Intra summaries, signed-net-mass and peak normalization, comparison-grid validation, SHA-256/config cache identity and invalidation, batch input discovery, provenance, plots, output round trips, and the `testPos2.mat` regression.
 
 ## Legacy manifest workflow
 
@@ -403,10 +424,7 @@ It uses the older condition/target/genotype/replicate/cell hierarchy and should 
 ## Current limitations
 
 - Only `τ=1` is supported.
-- Only one replica is processed per active runner invocation.
-- The full 47-file dataset has not been batch processed.
 - State switching is not fitted.
 - Bleaching kinetics are not fitted from this single lag.
 - Diffusion coefficients and multi-population Brownian models are not fitted.
-- Cross-replica and condition-level aggregation are not implemented.
 - Negative Intra bins are retained rather than forced to zero.

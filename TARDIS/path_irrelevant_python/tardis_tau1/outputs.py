@@ -363,7 +363,7 @@ def _write_diagnostic_plots(
 def _write_intra_area_normalized_plots(
     result: CellResult | ReplicaResult, output_dir: Path, level: str
 ) -> None:
-    """Write separate full-range and zoom conditional Intra-density figures."""
+    """Write signed Intra densities normalized by their net mass (1 - beta)."""
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
     edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
     density = np.asarray(result.distributions["intra_conditional_density_um_inv"])
@@ -385,8 +385,8 @@ def _write_intra_area_normalized_plots(
             fig, axis, path,
             xlim=(0.0, min(0.5, float(edges_um[-1]))) if zoom else (edges_um[0], edges_um[-1]),
             title="Zoom: 0–0.5 μm" if zoom else "Full range",
-            ylabel="Area-normalized Intra density (μm⁻¹)",
-            suptitle=f"{level.capitalize()} Intra · area normalized{subtitle}", legend=zoom,
+            ylabel="Signed-net-mass-normalized Intra density (μm⁻¹)",
+            suptitle=f"{level.capitalize()} Intra · signed net mass normalized{subtitle}", legend=zoom,
         )
 
 
@@ -768,3 +768,54 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return value
+
+
+def load_replica_result(output_dir: str | Path) -> ReplicaResult:
+    """Load and validate a saved v4 replica without loading its cells."""
+    output = Path(output_dir)
+    metadata = json.loads((output / "replica_result.json").read_text(encoding="utf-8"))
+    with np.load(output / "replica_result.npz", allow_pickle=False) as saved:
+        required = {
+            "edges_m", "bin_mids_m", "total", "inter_contribution",
+            "intra_contribution", "inter_conditional", "intra_conditional",
+            "average_inter_conditional_shape", "beta", "schema_version",
+        }
+        missing = required - set(saved.files)
+        if missing:
+            raise ValueError(f"Saved replica is missing arrays: {sorted(missing)}")
+        schema = str(saved["schema_version"].item())
+        if schema != metadata.get("schema_version"):
+            raise ValueError("Replica JSON and NPZ schema versions do not match")
+        if schema != "tau1-replica-cell-balanced-v4":
+            raise ValueError(f"Unsupported replica schema: {schema}")
+        edges = np.asarray(saved["edges_m"], dtype=float).copy()
+        mids = np.asarray(saved["bin_mids_m"], dtype=float).copy()
+        if (edges.ndim != 1 or mids.ndim != 1 or edges.size != mids.size + 1
+                or not np.isfinite(edges).all() or not np.all(np.diff(edges) > 0)):
+            raise ValueError("Saved replica has invalid distance bins")
+        distributions = dict(metadata["distributions"])
+        for key in (
+            "total", "inter_contribution", "intra_contribution",
+            "inter_conditional", "intra_conditional", "average_inter_conditional_shape",
+        ):
+            values = np.asarray(saved[key], dtype=float).copy()
+            if values.ndim != 1 or values.size != mids.size:
+                raise ValueError(f"Saved replica array {key} does not match bins")
+            distributions[key] = values
+        distributions["beta"] = float(np.asarray(saved["beta"]).item())
+        for key in saved.files:
+            if key.endswith("_density_um_inv") and np.asarray(saved[key]).ndim == 1:
+                values = np.asarray(saved[key], dtype=float).copy()
+                if values.size == mids.size:
+                    distributions[key] = values
+    parameters = dict(metadata["parameters"])
+    parameters["edges_m"] = edges
+    parameters["bin_mids_m"] = mids
+    return ReplicaResult(
+        ids=dict(metadata["ids"]), source=dict(metadata["source"]),
+        cells=dict(metadata["cells"]), parameters=parameters,
+        counts=dict(metadata["counts"]), distributions=distributions,
+        qc=dict(metadata["qc"]), schema_version=schema,
+        summaries=dict(metadata.get("summaries", {})),
+        provenance=dict(metadata.get("provenance", {})),
+    )

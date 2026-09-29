@@ -3,6 +3,7 @@
 from .batch import run_batch
 from .config import Tau1Config
 from .group import GroupResult, aggregate_group, save_group_result
+from .outputs import load_replica_result
 from .core import (
     ReplicaResult,
     aggregate_genotype,
@@ -24,4 +25,5 @@ __all__ = [
     "aggregate_genotype",
     "run_batch",
     "save_group_result",
+    "load_replica_result",
 ]

@@ -262,12 +262,26 @@ def analyze_replica(
     pixel_size_m: float = 117e-9,
     variable_name: str = "data",
     config: Tau1Config | None = None,
+    fingerprint: dict[str, Any] | None = None,
 ) -> tuple[ReplicaResult, list[CellResult]]:
     """Analyze every valid Base cell in one v7.3 MAT replica."""
     started = time.perf_counter()
     config = config or Tau1Config()
     path = Path(input_file).resolve()
-    fingerprint = fingerprint_file(path)
+    if fingerprint is None:
+        fingerprint = fingerprint_file(path)
+    else:
+        fingerprint = dict(fingerprint)
+        digest = fingerprint.get("sha256")
+        size = fingerprint.get("file_bytes")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in digest)
+            or not isinstance(size, int)
+            or size < 0
+        ):
+            raise ValueError("Invalid precomputed input fingerprint")
     shared_provenance = collect_environment_provenance(config)
     shared_provenance["input"] = {"path": str(path), **fingerprint}
     replica_id = replica or path.stem
