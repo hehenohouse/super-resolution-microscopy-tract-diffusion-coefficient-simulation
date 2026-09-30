@@ -33,6 +33,13 @@ class GroupAggregationTests(unittest.TestCase):
             group.distributions["inter_contribution"]["mean_density_um_inv"]
             + group.distributions["intra_contribution"]["mean_density_um_inv"],
         )
+        shape = group.distributions["average_intra_conditional_shape"]
+        np.testing.assert_allclose(shape["mean_density_um_inv"], [0.4, 0.6])
+        np.testing.assert_allclose(shape["sd_density_um_inv"], [0.2, 0.2])
+        self.assertAlmostEqual(
+            float(np.sum(shape["mean_density_um_inv"] * np.array([1.0, 1.0]))),
+            1.0,
+        )
 
     def test_group_writes_tables_and_arrays(self) -> None:
         result = aggregate_group([self._replica("R1", [0.2, 0.8]), self._replica("R2", [0.4, 0.6])])
@@ -48,7 +55,13 @@ class GroupAggregationTests(unittest.TestCase):
             self.assertIn("total_positive_mass", [row["metric"] for row in rows])
             self.assertTrue((output / "replica_metric_summary.csv").is_file())
             self.assertTrue((output / "group_mean_curve_summary.csv").is_file())
-            self.assertEqual(result.schema_version, "tau1-group-replica-balanced-v2")
+            self.assertTrue((output / "group_mean_intra_shape_summary.csv").is_file())
+            with np.load(output / "group_result.npz") as arrays:
+                self.assertIn(
+                    "average_intra_conditional_shape_replica_density_um_inv",
+                    arrays,
+                )
+            self.assertEqual(result.schema_version, "tau1-group-replica-balanced-v3")
             self.assertEqual(
                 [row["replica_id"] for row in result.provenance["replicas"]],
                 ["R1", "R2"],
@@ -124,6 +137,7 @@ class GroupAggregationTests(unittest.TestCase):
                 "total": total_array,
                 "inter_contribution": inter,
                 "intra_contribution": intra,
+                "average_intra_conditional_shape": total_array,
                 "beta": 0.25,
             },
             summaries={
@@ -148,7 +162,7 @@ class GroupAggregationTests(unittest.TestCase):
                 "python": {},
                 "git": {},
             },
-            schema_version="tau1-replica-cell-balanced-v4",
+            schema_version="tau1-replica-cell-balanced-v5",
         )
 
 

@@ -162,9 +162,18 @@ def _load_replica_density_arrays(
     with np.load(group_dir / "group_result.npz") as arrays:
         edges = np.asarray(arrays["edges_m"], dtype=float).copy()
         mids = np.asarray(arrays["bin_mids_m"], dtype=float).copy()
-        raw = np.asarray(
-            arrays["intra_contribution_replica_density_um_inv"], dtype=float
-        ).copy()
+        try:
+            raw = np.asarray(
+                arrays[
+                    "average_intra_conditional_shape_replica_density_um_inv"
+                ],
+                dtype=float,
+            ).copy()
+        except KeyError as exc:
+            raise ValueError(
+                f"Group output {group_dir} predates cell-normalized Intra shapes; "
+                "recompute replicas and group outputs"
+            ) from exc
     if edges.ndim != 1 or mids.ndim != 1 or raw.ndim != 2:
         raise ValueError(f"Invalid group distribution dimensions in {group_dir}")
     if edges.size != mids.size + 1 or raw.shape[1] != mids.size:
@@ -243,19 +252,19 @@ def _write_summary_table(records: dict[str, dict[str, Any]], path: Path) -> None
 
 
 def _conditional_record(group_dir: Path) -> dict[str, Any]:
-    """Normalize signed replica curves by their nonzero net Intra mass."""
-    edges, mids, raw = _load_replica_density_arrays(group_dir)
+    """Average replica shapes already normalized per cell before aggregation."""
+    edges, mids, normalized = _load_replica_density_arrays(group_dir)
     widths_um = np.diff(edges) * 1e6
-    masses = np.sum(raw * widths_um, axis=1)
-    tolerance = 100 * np.finfo(float).eps
-    invalid = ~np.isfinite(masses) | (np.abs(masses) <= tolerance)
+    masses = np.sum(normalized * widths_um, axis=1)
+    invalid = ~np.isfinite(masses) | ~np.isclose(
+        masses, 1.0, rtol=1e-12, atol=1e-12
+    )
     if np.any(invalid):
         indices = ", ".join(str(index) for index in np.flatnonzero(invalid))
         raise ValueError(
-            f"Signed net Intra mass must be finite and nonzero in {group_dir}; "
-            f"invalid replica indices: {indices}"
+            f"Replica normalized Intra shapes must have signed mass 1 in "
+            f"{group_dir}; invalid replica indices: {indices}"
         )
-    normalized = raw / masses[:, np.newaxis]
     mean = normalized.mean(axis=0)
     return {
         "x_m": mids,
@@ -375,7 +384,11 @@ def _write_split_plots(
         axis.set_xlabel("Distance (μm)")
         axis.set_xlim(0, min(0.5, edges_um[-1])) if zoom else axis.set_xlim(edges_um[0], edges_um[-1])
         axis.set_title("Zoom: 0–0.5 μm" if zoom else "Full range")
-        axis.set_ylabel("Intra contribution density (μm⁻¹)")
+        axis.set_ylabel(
+            "Signed-net-mass-normalized Intra density (μm⁻¹)"
+            if conditional
+            else "Intra contribution density (μm⁻¹)"
+        )
         if zoom:
             axis.legend(title="Mean ± 1 SD", frameon=False, loc="upper right")
         fig.suptitle(f"{target} · condition comparison · {label}")
@@ -408,7 +421,7 @@ def _write_peak_normalized_zoom_plot(
     axis.spines[["top", "right"]].set_visible(False)
     axis.set_xlim(0, 0.5)
     axis.set_xlabel("Distance (μm)")
-    axis.set_ylabel("Intra density / replica positive peak")
+    axis.set_ylabel("Cell-balanced Intra shape / replica positive peak")
     axis.set_title("Zoom: 0–0.5 μm · peak normalized")
     axis.legend(title="Mean ± 1 SD", frameon=False, loc="upper right")
     fig.suptitle(f"{target} · condition comparison · Intra distribution · peak normalized")

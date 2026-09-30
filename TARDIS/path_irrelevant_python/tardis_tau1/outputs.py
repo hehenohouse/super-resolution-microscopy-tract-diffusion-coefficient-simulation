@@ -19,6 +19,7 @@ _DENSITY_KEYS = (
     "intra_contribution_density_um_inv",
     "intra_conditional_density_um_inv",
     "average_inter_conditional_density_um_inv",
+    "average_intra_conditional_density_um_inv",
 )
 
 
@@ -79,6 +80,12 @@ def save_replica_result(
     cell_intra_density = np.stack(
         [cell.distributions["intra_contribution_density_um_inv"] for cell in cell_results]
     )
+    cell_intra_conditional = np.stack(
+        [cell.distributions["intra_conditional"] for cell in cell_results]
+    )
+    cell_intra_conditional_density = np.stack(
+        [cell.distributions["intra_conditional_density_um_inv"] for cell in cell_results]
+    )
     arrays: dict[str, np.ndarray] = {
         "edges_m": np.asarray(result.parameters["edges_m"]),
         "bin_mids_m": np.asarray(result.parameters["bin_mids_m"]),
@@ -90,10 +97,15 @@ def save_replica_result(
         "average_inter_conditional_shape": np.asarray(
             distributions["average_inter_conditional_shape"]
         ),
+        "average_intra_conditional_shape": np.asarray(
+            distributions["average_intra_conditional_shape"]
+        ),
         "beta": np.asarray(distributions["beta"]),
         "cell_ids": np.asarray([cell.ids["cell"] for cell in cell_results]),
         "cell_intra_contributions": cell_intra,
         "cell_intra_density_um_inv": cell_intra_density,
+        "cell_intra_conditional_shapes": cell_intra_conditional,
+        "cell_intra_conditional_density_um_inv": cell_intra_conditional_density,
         "schema_version": np.asarray(result.schema_version),
     }
     _add_density_arrays(arrays, distributions)
@@ -217,6 +229,8 @@ def _write_replica_distribution_csv(result: ReplicaResult, path: Path) -> None:
                 "inter_background_density_um_inv",
                 "inter_contribution_density_um_inv",
                 "intra_contribution_density_um_inv",
+                "average_intra_conditional_shape_probability",
+                "average_intra_conditional_shape_density_um_inv",
             ]
         )
         writer.writerows(
@@ -233,6 +247,8 @@ def _write_replica_distribution_csv(result: ReplicaResult, path: Path) -> None:
                 d["inter_conditional_density_um_inv"],
                 d["inter_contribution_density_um_inv"],
                 d["intra_contribution_density_um_inv"],
+                d["average_intra_conditional_shape"],
+                d["average_intra_conditional_density_um_inv"],
             )
         )
 
@@ -366,8 +382,14 @@ def _write_intra_area_normalized_plots(
     """Write signed Intra densities normalized by their net mass (1 - beta)."""
     x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
     edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
-    density = np.asarray(result.distributions["intra_conditional_density_um_inv"])
-    summary = result.summaries.get("positive_intra", {})
+    if isinstance(result, ReplicaResult):
+        density = np.asarray(
+            result.distributions["average_intra_conditional_density_um_inv"]
+        )
+        summary = result.summaries.get("intra_shape", {})
+    else:
+        density = np.asarray(result.distributions["intra_conditional_density_um_inv"])
+        summary = result.summaries.get("positive_intra", {})
     subtitle = ""
     if summary:
         subtitle = (
@@ -595,7 +617,7 @@ def _peak_normalized_intra_curves(
     """Return signed curves normalized by their positive maxima and those maxima."""
     raw = np.asarray(
         [
-            cell.distributions["intra_contribution_density_um_inv"]
+            cell.distributions["intra_conditional_density_um_inv"]
             for cell in cell_results
         ],
         dtype=float,
@@ -771,14 +793,18 @@ def _json_safe(value: Any) -> Any:
 
 
 def load_replica_result(output_dir: str | Path) -> ReplicaResult:
-    """Load and validate a saved v4 replica without loading its cells."""
+    """Load and validate a saved v5 replica without loading its cells."""
     output = Path(output_dir)
     metadata = json.loads((output / "replica_result.json").read_text(encoding="utf-8"))
     with np.load(output / "replica_result.npz", allow_pickle=False) as saved:
         required = {
             "edges_m", "bin_mids_m", "total", "inter_contribution",
             "intra_contribution", "inter_conditional", "intra_conditional",
-            "average_inter_conditional_shape", "beta", "schema_version",
+            "average_inter_conditional_shape", "average_intra_conditional_shape",
+            "average_intra_conditional_density_um_inv",
+            "cell_intra_conditional_shapes",
+            "cell_intra_conditional_density_um_inv",
+            "beta", "schema_version",
         }
         missing = required - set(saved.files)
         if missing:
@@ -786,7 +812,7 @@ def load_replica_result(output_dir: str | Path) -> ReplicaResult:
         schema = str(saved["schema_version"].item())
         if schema != metadata.get("schema_version"):
             raise ValueError("Replica JSON and NPZ schema versions do not match")
-        if schema != "tau1-replica-cell-balanced-v4":
+        if schema != "tau1-replica-cell-balanced-v5":
             raise ValueError(f"Unsupported replica schema: {schema}")
         edges = np.asarray(saved["edges_m"], dtype=float).copy()
         mids = np.asarray(saved["bin_mids_m"], dtype=float).copy()
@@ -794,12 +820,18 @@ def load_replica_result(output_dir: str | Path) -> ReplicaResult:
                 or not np.isfinite(edges).all() or not np.all(np.diff(edges) > 0)):
             raise ValueError("Saved replica has invalid distance bins")
         distributions = dict(metadata["distributions"])
-        for key in (
+        distribution_keys = (
             "total", "inter_contribution", "intra_contribution",
-            "inter_conditional", "intra_conditional", "average_inter_conditional_shape",
-        ):
+            "inter_conditional", "intra_conditional",
+            "average_inter_conditional_shape", "average_intra_conditional_shape",
+        )
+        for key in distribution_keys:
             values = np.asarray(saved[key], dtype=float).copy()
-            if values.ndim != 1 or values.size != mids.size:
+            if (
+                values.ndim != 1
+                or values.size != mids.size
+                or not np.isfinite(values).all()
+            ):
                 raise ValueError(f"Saved replica array {key} does not match bins")
             distributions[key] = values
         distributions["beta"] = float(np.asarray(saved["beta"]).item())
@@ -808,6 +840,50 @@ def load_replica_result(output_dir: str | Path) -> ReplicaResult:
                 values = np.asarray(saved[key], dtype=float).copy()
                 if values.size == mids.size:
                     distributions[key] = values
+        cell_shapes = np.asarray(saved["cell_intra_conditional_shapes"], dtype=float)
+        cell_shape_density = np.asarray(
+            saved["cell_intra_conditional_density_um_inv"], dtype=float
+        )
+        expected_matrix_shape = (int(metadata["counts"]["n_cells"]), mids.size)
+        if (
+            cell_shapes.shape != expected_matrix_shape
+            or cell_shape_density.shape != expected_matrix_shape
+            or not np.isfinite(cell_shapes).all()
+            or not np.isfinite(cell_shape_density).all()
+        ):
+            raise ValueError("Saved replica has invalid per-cell normalized Intra shapes")
+        widths_um = np.diff(edges) * 1e6
+        if not np.allclose(
+            cell_shape_density * widths_um,
+            cell_shapes,
+            rtol=1e-12,
+            atol=1e-12,
+        ):
+            raise ValueError("Saved per-cell Intra shape probabilities and densities disagree")
+        cell_shape_masses = cell_shapes.sum(axis=1)
+        if not np.allclose(
+            cell_shape_masses, 1.0, rtol=1e-12, atol=1e-12
+        ):
+            raise ValueError("Saved per-cell normalized Intra shapes must have signed mass 1")
+        shape = distributions["average_intra_conditional_shape"]
+        if not np.allclose(
+            cell_shapes.mean(axis=0), shape, rtol=1e-12, atol=1e-12
+        ):
+            raise ValueError("Saved replica Intra shape is not the equal-cell mean")
+        if not np.isclose(shape.sum(), 1.0, rtol=1e-12, atol=1e-12):
+            raise ValueError("Saved replica normalized Intra shape must have signed mass 1")
+        shape_density = distributions["average_intra_conditional_density_um_inv"]
+        if not np.allclose(
+            shape_density * widths_um, shape, rtol=1e-12, atol=1e-12
+        ):
+            raise ValueError("Saved replica Intra shape probabilities and densities disagree")
+        if not np.allclose(
+            distributions["total"],
+            distributions["inter_contribution"] + distributions["intra_contribution"],
+            rtol=1e-12,
+            atol=1e-12,
+        ):
+            raise ValueError("Saved replica contribution decomposition is inconsistent")
     parameters = dict(metadata["parameters"])
     parameters["edges_m"] = edges
     parameters["bin_mids_m"] = mids

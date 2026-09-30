@@ -14,7 +14,7 @@ from .outputs import load_replica_result
 from .provenance import fingerprint_file
 
 CACHE_SCHEMA = "tau1-replica-cache-v1"
-REPLICA_SCHEMA = "tau1-replica-cell-balanced-v4"
+REPLICA_SCHEMA = "tau1-replica-cell-balanced-v5"
 
 
 def canonical_json(value: Any) -> str:

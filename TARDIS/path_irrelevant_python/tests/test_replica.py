@@ -161,11 +161,35 @@ class ReplicaAggregationTests(unittest.TestCase):
         np.testing.assert_allclose(result.distributions["inter_contribution"], expected)
         self.assertFalse(np.allclose(expected, shortcut))
         self.assertAlmostEqual(result.distributions["beta"], 0.5)
+        expected_shape = np.mean(
+            [
+                first.distributions["intra_conditional"],
+                second.distributions["intra_conditional"],
+            ],
+            axis=0,
+        )
+        old_contribution_derived_shape = (
+            result.distributions["intra_contribution"]
+            / (1.0 - result.distributions["beta"])
+        )
+        np.testing.assert_allclose(
+            result.distributions["average_intra_conditional_shape"],
+            expected_shape,
+        )
+        self.assertFalse(np.allclose(expected_shape, old_contribution_derived_shape))
+        self.assertAlmostEqual(float(expected_shape.sum()), 1.0)
         np.testing.assert_allclose(
             result.distributions["total"],
             result.distributions["inter_contribution"]
             + result.distributions["intra_contribution"],
         )
+
+    def test_replica_rejects_zero_intra_mass_before_shape_averaging(self) -> None:
+        cell = self._cell(
+            "A", [8, 2], [8, 2], beta=1.0, background=[0.8, 0.2]
+        )
+        with self.assertRaisesRegex(ValueError, "signed Intra mass"):
+            aggregate_replica([cell], Tau1Config(n_bins=2, save_plots=False))
 
     def test_replica_preserves_raw_pair_count_totals(self) -> None:
         first = self._cell(
@@ -212,7 +236,7 @@ class ReplicaAggregationTests(unittest.TestCase):
                 self.assertIn("positive_intra_total_positive_mass", arrays)
                 self.assertEqual(
                     arrays["schema_version"].item(),
-                    "tau1-replica-cell-balanced-v4",
+                    "tau1-replica-cell-balanced-v5",
                 )
                 self.assertNotIn("pair_weighted_total", arrays)
                 self.assertEqual(arrays["cell_ids"].tolist(), ["A", "B"])
@@ -226,6 +250,13 @@ class ReplicaAggregationTests(unittest.TestCase):
                 np.testing.assert_allclose(
                     arrays["cell_intra_contributions"].mean(axis=0),
                     arrays["intra_contribution"],
+                )
+                np.testing.assert_allclose(
+                    arrays["cell_intra_conditional_shapes"].mean(axis=0),
+                    arrays["average_intra_conditional_shape"],
+                )
+                self.assertAlmostEqual(
+                    float(arrays["average_intra_conditional_shape"].sum()), 1.0
                 )
             payload = json.loads((output / "replica_result.json").read_text())
             self.assertIn("distributions", payload)
@@ -335,7 +366,11 @@ class ReplicaAggregationTests(unittest.TestCase):
                 "inter_conditional": background_array,
                 "inter_contribution": inter,
                 "intra_contribution": intra,
-                "intra_conditional": intra / (1 - beta),
+                "intra_conditional": (
+                    intra / (1 - beta)
+                    if beta < 1.0
+                    else np.full_like(intra, np.nan)
+                ),
                 "beta": beta,
                 "beta_raw": beta,
                 "beta_was_clipped": False,

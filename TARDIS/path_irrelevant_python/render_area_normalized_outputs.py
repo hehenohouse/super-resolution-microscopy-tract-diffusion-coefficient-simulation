@@ -23,11 +23,16 @@ def main() -> None:
         if full_destination.is_file() and zoom_destination.is_file():
             continue
         with np.load(archive) as arrays:
-            if "intra_conditional_density_um_inv" not in arrays:
+            density_key = (
+                "average_intra_conditional_density_um_inv"
+                if archive.name == "replica_result.npz"
+                else "intra_conditional_density_um_inv"
+            )
+            if density_key not in arrays:
                 continue
             x = arrays["bin_mids_m"] * 1e6
             edges = arrays["edges_m"] * 1e6
-            density = arrays["intra_conditional_density_um_inv"]
+            density = arrays[density_key]
         for destination, zoom in ((full_destination, False), (zoom_destination, True)):
             fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
             axis.plot(x, density, color="#1baf7a", linewidth=3.2)

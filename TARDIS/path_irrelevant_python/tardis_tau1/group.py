@@ -16,6 +16,8 @@ from .provenance import collect_environment_provenance
 
 
 _COMPONENTS = ("total", "inter_contribution", "intra_contribution")
+_SHAPE_COMPONENT = "average_intra_conditional_shape"
+_GROUP_DISTRIBUTIONS = (*_COMPONENTS, _SHAPE_COMPONENT)
 _SUMMARY_METRICS = (
     "beta",
     "total_positive_mass",
@@ -38,9 +40,10 @@ class GroupResult:
     replica_density_distributions: dict[str, np.ndarray]
     replica_metric_statistics: dict[str, dict[str, float]]
     group_mean_curve_summary: dict[str, float]
+    group_mean_shape_summary: dict[str, float]
     replica_summaries: list[dict[str, Any]]
     provenance: dict[str, Any]
-    schema_version: str = "tau1-group-replica-balanced-v2"
+    schema_version: str = "tau1-group-replica-balanced-v3"
 
     @property
     def summary_statistics(self) -> dict[str, dict[str, float]]:
@@ -73,6 +76,22 @@ def aggregate_group(replicas: Iterable[ReplicaResult]) -> GroupResult:
         }
         replica_density_distributions[component] = stack
 
+    shape_stack = np.stack([
+        np.asarray(replica.distributions[_SHAPE_COMPONENT], dtype=float) / widths_um
+        for replica in items
+    ])
+    shape_mean, shape_sd, shape_sem, shape_lower, shape_upper = (
+        _mean_and_error_band(shape_stack)
+    )
+    distributions[_SHAPE_COMPONENT] = {
+        "mean_density_um_inv": shape_mean,
+        "sd_density_um_inv": shape_sd,
+        "sem_density_um_inv": shape_sem,
+        "mean_minus_sd_density_um_inv": shape_lower,
+        "mean_plus_sd_density_um_inv": shape_upper,
+    }
+    replica_density_distributions[_SHAPE_COMPONENT] = shape_stack
+
     replica_summaries = [_replica_summary(replica) for replica in items]
     replica_metric_statistics = {
         metric: _scalar_statistics(
@@ -87,6 +106,10 @@ def aggregate_group(replicas: Iterable[ReplicaResult]) -> GroupResult:
     group_mean_curve_summary["beta"] = float(
         np.mean([replica.distributions["beta"] for replica in items])
     )
+    group_mean_shape = shape_mean * widths_um
+    if not np.isclose(group_mean_shape.sum(), 1.0, rtol=1e-12, atol=1e-12):
+        raise ValueError("Group mean normalized Intra shape must have signed mass 1")
+    group_mean_shape_summary = summarize_positive_intra(group_mean_shape, edges)
     provenance = {
         "compatibility": compatibility,
         "replicas": [
@@ -105,6 +128,7 @@ def aggregate_group(replicas: Iterable[ReplicaResult]) -> GroupResult:
         ],
         "aggregation": {
             "replica_weighting": "equal_weight",
+            "shape_aggregation": "normalize_each_cell_then_equal_cell_mean_then_equal_replica_mean",
             "error_model": "sample_sd_sem_and_mean_plus_minus_sd_across_biological_replicates",
             "n_replicas": len(items),
         },
@@ -126,6 +150,7 @@ def aggregate_group(replicas: Iterable[ReplicaResult]) -> GroupResult:
         replica_density_distributions=replica_density_distributions,
         replica_metric_statistics=replica_metric_statistics,
         group_mean_curve_summary=group_mean_curve_summary,
+        group_mean_shape_summary=group_mean_shape_summary,
         replica_summaries=replica_summaries,
         provenance=provenance,
     )
@@ -135,7 +160,7 @@ def _validate_replicas(items: list[ReplicaResult]) -> dict[str, Any]:
     if not items:
         raise ValueError("At least one replica result is required")
     first = items[0]
-    expected_schema = "tau1-replica-cell-balanced-v4"
+    expected_schema = "tau1-replica-cell-balanced-v5"
     reference_ids = {key: first.ids.get(key) for key in ("condition", "target")}
     reference_config = first.provenance.get("config")
     if not isinstance(reference_config, dict):
@@ -230,6 +255,18 @@ def _validate_replicas(items: list[ReplicaResult]) -> dict[str, Any]:
                 raise ValueError(
                     f"Replica {replica_id} has invalid {component} array"
                 )
+        shape = np.asarray(
+            replica.distributions.get(_SHAPE_COMPONENT), dtype=float
+        )
+        if shape.shape != mids.shape or not np.isfinite(shape).all():
+            raise ValueError(
+                f"Replica {replica_id} has invalid normalized Intra shape"
+            )
+        if not np.isclose(shape.sum(), 1.0, rtol=1e-12, atol=1e-12):
+            raise ValueError(
+                f"Replica {replica_id} normalized Intra shape has signed mass "
+                f"{shape.sum()}, expected 1"
+            )
     return {
         "replica_schema_version": expected_schema,
         "analysis_config": scientific_config,
@@ -246,6 +283,10 @@ def save_group_result(result: GroupResult, output_dir: str | Path, *, save_plots
     _write_group_summary(result, output / "group_summary.csv")
     _write_group_summary(result, output / "replica_metric_summary.csv")
     _write_group_mean_curve_summary(result, output / "group_mean_curve_summary.csv")
+    _write_metric_values(
+        result.group_mean_shape_summary,
+        output / "group_mean_intra_shape_summary.csv",
+    )
     _write_replica_summaries(result, output / "replica_summary.csv")
     arrays: dict[str, np.ndarray] = {
         "edges_m": np.asarray(result.parameters["edges_m"]),
@@ -264,6 +305,13 @@ def save_group_result(result: GroupResult, output_dir: str | Path, *, save_plots
             if isinstance(value, (int, float, np.number))
         }
     )
+    arrays.update(
+        {
+            f"group_mean_intra_shape_{metric}": np.asarray(value)
+            for metric, value in result.group_mean_shape_summary.items()
+            if isinstance(value, (int, float, np.number))
+        }
+    )
     for component, statistics in result.distributions.items():
         for name, values in statistics.items():
             arrays[f"{component}_{name}"] = np.asarray(values)
@@ -279,6 +327,7 @@ def save_group_result(result: GroupResult, output_dir: str | Path, *, save_plots
     )
     if save_plots:
         _write_group_distribution_plots(result, output)
+        _write_group_intra_shape_plots(result, output)
         _write_replica_intra_overlays(result, output)
 
 
@@ -332,7 +381,7 @@ def _write_group_distributions(result: GroupResult, path: Path) -> None:
     edges = np.asarray(result.parameters["edges_m"])
     mids = np.asarray(result.parameters["bin_mids_m"])
     fields = ["distance_left_m", "distance_right_m", "distance_mid_m"]
-    for component in _COMPONENTS:
+    for component in _GROUP_DISTRIBUTIONS:
         fields.extend(
             f"{component}_{name}"
             for name in (
@@ -352,7 +401,7 @@ def _write_group_distributions(result: GroupResult, path: Path) -> None:
                 "distance_right_m": edges[index + 1],
                 "distance_mid_m": mids[index],
             }
-            for component in _COMPONENTS:
+            for component in _GROUP_DISTRIBUTIONS:
                 for name, values in result.distributions[component].items():
                     row[f"{component}_{name}"] = values[index]
             writer.writerow(row)
@@ -369,11 +418,15 @@ def _write_group_summary(result: GroupResult, path: Path) -> None:
 
 
 def _write_group_mean_curve_summary(result: GroupResult, path: Path) -> None:
+    _write_metric_values(result.group_mean_curve_summary, path)
+
+
+def _write_metric_values(values: dict[str, float], path: Path) -> None:
     fields = ["metric", "value"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        for metric, value in result.group_mean_curve_summary.items():
+        for metric, value in values.items():
             writer.writerow({"metric": metric, "value": value})
 
 
@@ -418,6 +471,55 @@ def _write_group_distribution_plots(result: GroupResult, output_dir: Path) -> No
             axis.legend(frameon=False, loc="upper right")
         fig.suptitle(title)
         fig.savefig(output_dir / f"group_mean_distributions_{suffix}.png", dpi=180, facecolor="white", bbox_inches="tight")
+        plt.close(fig)
+
+
+def _write_group_intra_shape_plots(result: GroupResult, output_dir: Path) -> None:
+    """Write the primary equal-cell, equal-replica normalized Intra shape."""
+    plt = _pyplot()
+    x_um = np.asarray(result.parameters["bin_mids_m"]) * 1e6
+    edges_um = np.asarray(result.parameters["edges_m"]) * 1e6
+    stats = result.distributions[_SHAPE_COMPONENT]
+    title = (
+        f"{result.ids['condition']} · {result.ids['target']} · "
+        f"n={len(result.replica_ids)} biological replicas · normalized Intra shape"
+    )
+    for suffix, zoom in (("full_range", False), ("zoom_0p5um", True)):
+        fig, axis = plt.subplots(figsize=(7.2, 5.2), constrained_layout=True)
+        axis.plot(
+            x_um,
+            stats["mean_density_um_inv"],
+            color="#1baf7a",
+            linewidth=3.2,
+            label="Mean normalized Intra shape",
+        )
+        axis.fill_between(
+            x_um,
+            stats["mean_minus_sd_density_um_inv"],
+            stats["mean_plus_sd_density_um_inv"],
+            color="#1baf7a",
+            alpha=0.20,
+            linewidth=0,
+            label="± 1 SD",
+        )
+        axis.axhline(0, color="#777777", linewidth=0.8, linestyle=":")
+        axis.grid(axis="y", color="#dddddd", linewidth=0.7)
+        axis.spines[["top", "right"]].set_visible(False)
+        axis.set_xlabel("Distance (μm)")
+        axis.set_xlim(0, min(0.5, edges_um[-1])) if zoom else axis.set_xlim(
+            edges_um[0], edges_um[-1]
+        )
+        axis.set_ylabel("Signed-net-mass-normalized Intra density (μm⁻¹)")
+        axis.set_title("Zoom: 0–0.5 μm" if zoom else "Full range")
+        if zoom:
+            axis.legend(frameon=False, loc="upper right")
+        fig.suptitle(title)
+        fig.savefig(
+            output_dir / f"group_intra_area_normalized_{suffix}.png",
+            dpi=180,
+            facecolor="white",
+            bbox_inches="tight",
+        )
         plt.close(fig)
 
 

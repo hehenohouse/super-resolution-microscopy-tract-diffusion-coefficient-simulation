@@ -4,6 +4,48 @@ All notable changes to the Python τ=1 distribution pipeline are documented here
 
 ## [Unreleased]
 
+### 2026-09-30
+
+#### Changed
+
+- Made the primary Intra shape estimator normalize every cell by its own signed
+  net mass, `S_c = Intra_c / (1 - beta_c)`, before the equal-cell replica mean;
+  group and comparison shapes then average those replica shapes with equal
+  biological-replica weight.
+- Preserved canonical contribution outputs (`Total`, `Inter`, `Intra`, beta,
+  pair counts, and positive-Intra contribution summaries) as a separate
+  decomposition/QC scope. Negative normalized-shape bins remain signed.
+- Updated area-normalized and peak-normalized replica, group, and comparison
+  figures to start from the cell-normalized shape rather than normalizing the
+  mean contribution after cell aggregation.
+- Updated schemas to `tau1-replica-cell-balanced-v5` and
+  `tau1-group-replica-balanced-v3`. Existing v4 replica caches miss
+  automatically and must be recomputed; the cache-manifest schema remains v1.
+
+#### Added
+
+- Added saved per-cell normalized Intra shape matrices, their equal-cell replica
+  mean, equal-replica group statistics, and shape-scoped summaries in NPZ/CSV
+  outputs.
+- Added strict finite, bin-alignment, signed-unit-mass, density/probability, and
+  equal-cell-mean validation for normalized shapes. Zero or near-zero signed
+  Intra mass raises an explicit error rather than silently changing weights.
+- Added regressions proving the cell-normalized estimator differs from late
+  normalization when cell beta values differ, and covering group weighting,
+  comparison consumption, old-schema rejection, and damaged shape caches.
+
+#### Validation
+
+- Confirmed all 38 unit and regression tests pass.
+- Recomputed all 12 target/condition groups from source data under v5: 47
+  biological replicas and 539 cells completed successfully.
+- Confirmed all 539 cell shapes, 47 replica shapes, and 12 group mean shapes
+  are finite and have signed mass one (maximum error `3.33e-16`).
+- Confirmed v4 and v5 Total, Inter contribution, Intra contribution, and beta
+  arrays are numerically identical across all 47 replicas.
+- Confirmed the subsequent run reused all 47 v5 replica caches and computed
+  zero replicas while regenerating all group and comparison outputs.
+
 ### 2026-09-28
 
 #### Added

@@ -66,6 +66,39 @@ class ReplicaCacheTests(unittest.TestCase):
                 load_cached_replica(output, identity, save_plots=False)
             )
 
+    def test_missing_normalized_shape_array_invalidates_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            identity = self._write_saved_replica(output)
+            with np.load(output / "replica_result.npz") as saved:
+                arrays = {
+                    name: saved[name].copy()
+                    for name in saved.files
+                    if name != "cell_intra_conditional_shapes"
+                }
+            np.savez_compressed(output / "replica_result.npz", **arrays)
+
+            self.assertIsNone(
+                load_cached_replica(output, identity, save_plots=False)
+            )
+
+    def test_v4_replica_is_not_adopted_as_v5_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            identity = self._write_saved_replica(output)
+            metadata_path = output / "replica_result.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["schema_version"] = "tau1-replica-cell-balanced-v4"
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            with np.load(output / "replica_result.npz") as saved:
+                arrays = {name: saved[name].copy() for name in saved.files}
+            arrays["schema_version"] = np.array("tau1-replica-cell-balanced-v4")
+            np.savez_compressed(output / "replica_result.npz", **arrays)
+
+            self.assertIsNone(
+                load_cached_replica(output, identity, save_plots=False)
+            )
+
     def test_legacy_valid_result_is_adopted_with_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
@@ -99,6 +132,8 @@ class ReplicaCacheTests(unittest.TestCase):
             "inter_conditional": [0.2, 0.8],
             "intra_conditional": [0.2, 0.8],
             "average_inter_conditional_shape": [0.2, 0.8],
+            "average_intra_conditional_shape": [0.2, 0.8],
+            "average_intra_conditional_density_um_inv": [0.2, 0.8],
             "beta": 0.25,
             "aggregation": "equal_cell_mean",
         }
@@ -112,17 +147,17 @@ class ReplicaCacheTests(unittest.TestCase):
                 "frame_interval_s": 0.02,
                 "pixel_size_m": 117e-9,
             },
-            "cells": {"included_cell_ids": [], "included_count": 0},
+            "cells": {"included_cell_ids": [], "included_count": 1},
             "parameters": {
                 **config.to_dict(),
                 "edges_m": edges.tolist(),
                 "bin_mids_m": [0.5e-6, 1.5e-6],
             },
-            "counts": {"n_cells": 0},
+            "counts": {"n_cells": 1},
             "distributions": distributions,
             "qc": {"pass": True},
-            "schema_version": "tau1-replica-cell-balanced-v4",
-            "summaries": {"positive_intra": {}},
+            "schema_version": "tau1-replica-cell-balanced-v5",
+            "summaries": {"positive_intra": {}, "intra_shape": {}},
             "provenance": {
                 "config": config.to_dict(),
                 "input": {"path": "R1.mat", "sha256": digest, "file_bytes": 10},
@@ -143,8 +178,16 @@ class ReplicaCacheTests(unittest.TestCase):
             average_inter_conditional_shape=np.array(
                 distributions["average_inter_conditional_shape"]
             ),
+            average_intra_conditional_shape=np.array(
+                distributions["average_intra_conditional_shape"]
+            ),
+            average_intra_conditional_density_um_inv=np.array(
+                distributions["average_intra_conditional_density_um_inv"]
+            ),
+            cell_intra_conditional_shapes=np.array([[0.2, 0.8]]),
+            cell_intra_conditional_density_um_inv=np.array([[0.2, 0.8]]),
             beta=np.array(0.25),
-            schema_version=np.array("tau1-replica-cell-balanced-v4"),
+            schema_version=np.array("tau1-replica-cell-balanced-v5"),
         )
         for name in (
             "replica_distributions.csv",

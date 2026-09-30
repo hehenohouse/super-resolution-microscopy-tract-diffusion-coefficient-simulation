@@ -24,16 +24,16 @@ class ComparisonTests(unittest.TestCase):
             self._write_group(
                 group_dir.parent,
                 np.array([0.0, 0.1e-6, 0.2e-6, 0.3e-6]),
-                np.array([[2.0, -1.0, 1.0], [4.0, -2.0, 2.0]]),
+                np.array([[20.0, -10.0, 0.0], [10.0, -5.0, 5.0]]),
             )
             record = _conditional_record(group_dir)
 
         widths_um = np.full(3, 0.1)
-        np.testing.assert_allclose(record["mean"], [10.0, -5.0, 5.0])
+        np.testing.assert_allclose(record["mean"], [15.0, -7.5, 2.5])
         self.assertAlmostEqual(float(np.sum(record["mean"] * widths_um)), 1.0)
         self.assertLess(record["mean"][1], 0.0)
-        # Dividing by positive mass instead would produce a first bin of 2 / 0.3.
-        self.assertNotAlmostEqual(record["mean"][0], 2.0 / 0.3)
+        # The stored replica shapes are consumed directly, with no late normalization.
+        self.assertAlmostEqual(record["mean"][0], 15.0)
 
     def test_peak_normalization_occurs_before_replica_averaging(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -41,13 +41,14 @@ class ComparisonTests(unittest.TestCase):
             self._write_group(
                 group_dir.parent,
                 np.array([0.0, 0.1e-6, 0.2e-6, 0.3e-6]),
-                np.array([[2.0, 1.0, -1.0], [4.0, 0.0, -2.0]]),
+                np.array([[8.0, 4.0, -2.0], [10.0, 2.0, -2.0]]),
             )
             record = _peak_normalized_record(group_dir)
 
-        np.testing.assert_allclose(record["mean"], [1.0, 0.25, -0.5])
+        np.testing.assert_allclose(record["mean"], [1.0, 0.35, -0.225])
         np.testing.assert_allclose(
-            record["sd"], np.std([[1.0, 0.5, -0.5], [1.0, 0.0, -0.5]], axis=0, ddof=1)
+            record["sd"],
+            np.std([[1.0, 0.5, -0.25], [1.0, 0.2, -0.2]], axis=0, ddof=1),
         )
 
     def test_invalid_signed_net_mass_is_rejected(self) -> None:
@@ -58,7 +59,7 @@ class ComparisonTests(unittest.TestCase):
                 np.array([0.0, 0.1e-6, 0.2e-6, 0.3e-6]),
                 np.array([[1.0, -1.0, 0.0]]),
             )
-            with self.assertRaisesRegex(ValueError, "Signed net Intra mass"):
+            with self.assertRaisesRegex(ValueError, "signed mass 1"):
                 _conditional_record(group_dir)
 
     def test_comparison_rejects_mismatched_distance_bins(self) -> None:
@@ -69,12 +70,12 @@ class ComparisonTests(unittest.TestCase):
             self._write_group(
                 wt,
                 np.array([0.0, 0.1e-6, 0.2e-6, 0.3e-6]),
-                np.array([[2.0, -1.0, 1.0]]),
+                np.array([[10.0, -5.0, 5.0]]),
             )
             self._write_group(
                 mdk,
                 np.array([0.0, 0.1e-6, 0.25e-6, 0.3e-6]),
-                np.array([[2.0, -1.0, 1.0]]),
+                np.array([[10.0, -5.0, 5.0]]),
             )
             with self.assertRaisesRegex(ValueError, "distance bins do not match"):
                 save_target_condition_comparison(
@@ -87,8 +88,8 @@ class ComparisonTests(unittest.TestCase):
             first = root / "first"
             second = root / "second"
             edges = np.array([0.0, 0.1e-6, 0.2e-6, 0.3e-6])
-            self._write_group(first, edges, np.array([[2.0, -1.0, 1.0], [3.0, -1.0, 2.0]]))
-            self._write_group(second, edges, np.array([[4.0, -2.0, 2.0], [2.0, -0.5, 1.5]]))
+            self._write_group(first, edges, np.array([[10.0, -5.0, 5.0], [12.0, -4.0, 2.0]]))
+            self._write_group(second, edges, np.array([[14.0, -6.0, 2.0], [8.0, -2.0, 4.0]]))
 
             condition_output = root / "condition_output"
             save_target_condition_comparison(
@@ -172,6 +173,7 @@ class ComparisonTests(unittest.TestCase):
             edges_m=edges,
             bin_mids_m=mids,
             intra_contribution_replica_density_um_inv=raw,
+            average_intra_conditional_shape_replica_density_um_inv=raw,
         )
         with (group / "group_mean_distributions.csv").open(
             "w", newline="", encoding="utf-8"

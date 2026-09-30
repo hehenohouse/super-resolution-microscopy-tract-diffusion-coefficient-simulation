@@ -130,6 +130,25 @@ The Inter calculation is explicitly `mean(beta_c × B_c)`, not `mean(beta_c) × 
 
 No pair-weighted replica Total, beta, Inter, or Intra distribution is produced. Per-cell raw pair counts remain available for QC and audit.
 
+### Primary normalized Intra shape
+
+Shape comparison uses a separate, explicitly cell-balanced estimator. Each cell's signed Intra contribution is normalized by its own signed net mass before any averaging:
+
+```text
+S_c     = Intra_c / (1 - beta_c)
+S_rep   = mean_c(S_c)
+S_group = mean_rep(S_rep)
+```
+
+Thus every valid cell has equal weight within its replica, and every biological replica has equal weight within its group. In general, this primary estimator is not equal to the contribution-derived quantity:
+
+```text
+mean_c(Intra_c / (1 - beta_c))
+    != mean_c(Intra_c) / (1 - mean_c(beta_c))
+```
+
+The latter remains saved as `intra_conditional` for decomposition audit, but primary area-normalized replica, group, and comparison figures use `average_intra_conditional_shape`. Normalization uses signed net mass, not positive-only mass: negative bins remain negative and each valid shape has signed integral one. A cell with zero or numerically near-zero `1 - beta_c` is rejected rather than silently omitted or included through `nanmean`.
+
 ## Probability density and positive Intra summaries
 
 The canonical arrays remain per-bin probability masses. Bin-width-independent densities are also saved in inverse micrometres:
@@ -147,7 +166,7 @@ For interpretation, each cell and replica also receives a `positive_intra` summa
 
 Cell and replica JSON results record the complete configuration, input SHA-256 and byte size, analysis runtime, schema version, package version, Python version, Git commit, and Git dirty state. One MAT replica is fingerprinted once and that identity is shared by all of its Base cells. Git or installed-package metadata may be `null` when unavailable; missing environment metadata never prevents scientific analysis. Output serialization time is excluded from the recorded analysis runtime.
 
-Group schema `tau1-group-replica-balanced-v2` records the ordered replica input hashes, shared analysis configuration and calibration, each source replica's environment, and the group-generation environment. Group aggregation rejects mixed schemas, scientific configurations, calibrations, bin grids, duplicate replica IDs, and duplicate input hashes before averaging.
+Group schema `tau1-group-replica-balanced-v3` records the ordered replica input hashes, shared analysis configuration and calibration, each source replica's environment, and the group-generation environment. Group aggregation rejects mixed schemas, scientific configurations, calibrations, bin grids, duplicate replica IDs, and duplicate input hashes before averaging.
 
 ## Running one Base cell
 
@@ -199,7 +218,9 @@ Options:
 Use `run_xinran_group.py` to analyze multiple MAT replicas with the same
 condition and target. Each MAT file is first aggregated as an equal-cell
 replica; the group result then gives each biological replica equal weight.
-The group-level output reports sample SD and SEM across replicas, never across
+Contribution curves retain the canonical decomposition, while the primary Intra
+shape follows cell normalization → equal-cell replica mean → equal-replica group
+mean. The group-level output reports sample SD and SEM across replicas, never across
 pooled cells. The plotted error band is mean ± 1 SD. Two summary scopes are
 saved separately: `replica_metric_summary.csv` calculates each nonlinear metric
 per replica and then summarizes those values, while
@@ -257,10 +278,12 @@ WT, TDK, and MDK (three sets). Each set writes:
 - `*_intra_contribution_full_range.png` and `*_intra_contribution_zoom_0p5um.png`:
   signed Intra contribution density, retaining amplitude and Intra-mass differences;
 - `*_intra_area_normalized_full_range.png` and
-  `*_intra_area_normalized_zoom_0p5um.png`: conditional signed Intra densities.
-  Each biological-replica curve is divided by its net signed Intra mass
-  (`1 - beta`), so its signed integral is one while negative bins remain unchanged
-  in sign. This is not normalization by positive Intra mass;
+  `*_intra_area_normalized_zoom_0p5um.png`: primary cell-balanced signed Intra
+  shapes. Each cell is first divided by its own net signed Intra mass
+  (`1 - beta_c`), cells are averaged equally within each replica, and those saved
+  replica shapes are then averaged equally. Every replica shape has signed integral
+  one while negative bins remain unchanged in sign. This is not normalization by
+  positive Intra mass and is not late normalization of a replica contribution curve;
 - `*_intra_peak_normalized_zoom_0p5um.png`: zoom-only curves where each
   biological replica's positive Intra peak is set to one before calculating
   mean ± 1 SD. This is the peak-normalized shape comparison.
@@ -324,8 +347,8 @@ replica_output/
 ### Replica files
 
 - `replica_result.json`: identifiers, parameters, counts, probability/density distributions, positive-Intra summary, QC, and full provenance.
-- `replica_result.npz`: numeric arrays including probabilities, densities, beta, positive-Intra scalars, provenance scalars, `cell_ids`, and both cell Intra matrices (`n_cells × n_bins`).
-- `replica_distributions.csv`: equal-cell replica probability masses and densities in SI distance bins.
+- `replica_result.npz`: numeric arrays including probabilities, densities, beta, positive-Intra scalars, provenance scalars, `cell_ids`, cell Intra contribution matrices, per-cell normalized Intra shapes, and their equal-cell mean (`n_cells × n_bins` where applicable).
+- `replica_distributions.csv`: equal-cell contribution probability masses/densities plus the primary equal-cell normalized Intra shape in SI distance bins.
 - `cell_summary.csv`: per-cell beta, localization/pair counts, signed-negative QC, and positive-Intra summaries.
 - `replica_summary.csv`: one-row replica scientific summary plus schema, input hash, versions, Git state, and runtime.
 - `replica_distribution_{full_range,zoom_0p5um}.png`: separate full-range and
@@ -382,7 +405,7 @@ Validated replica: `WT / Miro1 / 20251016_WT_Miro1_V7`.
 | Positive-weighted mean distance | 0.1463261920 μm |
 | Positive-weighted median distance | 0.0913423954 μm |
 
-The enhanced result uses cell schema `tau1-cell-v3` and replica schema `tau1-replica-cell-balanced-v4`. The input SHA-256 begins `765effd0a438`, and all 10 cells share the same full fingerprint. Density integration recovers Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684.
+The current pipeline uses cell schema `tau1-cell-v3` and replica schema `tau1-replica-cell-balanced-v5`. The input SHA-256 begins `765effd0a438`, and all 10 cells share the same full fingerprint. Density integration recovers Total mass 1, Inter mass 0.8302165316, and Intra mass 0.1697834684.
 
 The saved `cell_intra_contributions` array has shape `10 × 300`; its binwise mean exactly equals the saved replica Intra contribution. Compared with the 30 nm baseline, beta changed by only `-0.0003605`; the narrower bins expose more signed bin-to-bin residual variation, increasing negative-bin count from 42 to 134 and negative mass from `0.003586` to `0.004762`.
 
@@ -406,7 +429,7 @@ $env:PYTHONPATH = "path_irrelevant_python"
 python -m unittest discover -s path_irrelevant_python/tests -v
 ```
 
-The current suite contains 35 tests covering pair semantics, MATLAB readers, SI conversion, beta constraints, equal-cell and equal-replica aggregation, strict group compatibility, scoped group metrics, density integration, interpolated positive-Intra summaries, signed-net-mass and peak normalization, comparison-grid validation, SHA-256/config cache identity and invalidation, batch input discovery, provenance, plots, output round trips, and the `testPos2.mat` regression.
+The current suite contains 38 tests covering pair semantics, MATLAB readers, SI conversion, beta constraints, equal-cell and equal-replica aggregation, strict group compatibility, scoped group metrics, density integration, interpolated positive-Intra summaries, signed-net-mass and peak normalization, comparison-grid validation, SHA-256/config cache identity and invalidation, batch input discovery, provenance, plots, output round trips, and the `testPos2.mat` regression.
 
 ## Legacy manifest workflow
 

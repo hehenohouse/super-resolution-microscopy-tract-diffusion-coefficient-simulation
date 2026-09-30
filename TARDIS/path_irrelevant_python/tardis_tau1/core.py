@@ -409,6 +409,7 @@ def add_distribution_densities(
         "intra_contribution": "intra_contribution_density_um_inv",
         "intra_conditional": "intra_conditional_density_um_inv",
         "average_inter_conditional_shape": "average_inter_conditional_density_um_inv",
+        "average_intra_conditional_shape": "average_intra_conditional_density_um_inv",
     }
     for probability_key, density_key in density_keys.items():
         if probability_key not in result:
@@ -561,6 +562,36 @@ def aggregate_replica(
             cell.summaries["positive_intra"] = summarize_positive_intra(
                 cell.distributions["intra_contribution"], edges
             )
+        intra_mass = 1.0 - float(cell.distributions["beta"])
+        tolerance = 100 * np.finfo(float).eps
+        if intra_mass <= tolerance:
+            raise ValueError(
+                f"Cell {cell.ids['cell']} has signed Intra mass {intra_mass}; "
+                f"must exceed {tolerance} for shape normalization"
+            )
+        conditional = np.asarray(
+            cell.distributions.get("intra_conditional"), dtype=float
+        )
+        if conditional.shape != (edges.size - 1,) or not np.isfinite(conditional).all():
+            raise ValueError(
+                f"Cell {cell.ids['cell']} has an invalid normalized Intra shape"
+            )
+        if not np.isclose(conditional.sum(), 1.0, rtol=1e-12, atol=1e-12):
+            raise ValueError(
+                f"Cell {cell.ids['cell']} normalized Intra shape has signed mass "
+                f"{conditional.sum()}, expected 1"
+            )
+        expected_conditional = (
+            np.asarray(cell.distributions["intra_contribution"], dtype=float)
+            / intra_mass
+        )
+        if not np.allclose(
+            conditional, expected_conditional, rtol=1e-12, atol=1e-12
+        ):
+            raise ValueError(
+                f"Cell {cell.ids['cell']} normalized Intra shape does not match "
+                "Intra / (1 - beta)"
+            )
 
     total_stack = np.stack([cell.distributions["total"] for cell in cells])
     inter_stack = np.stack(
@@ -572,10 +603,14 @@ def aggregate_replica(
     background_stack = np.stack(
         [cell.distributions["inter_conditional"] for cell in cells]
     )
+    intra_conditional_stack = np.stack(
+        [cell.distributions["intra_conditional"] for cell in cells]
+    )
     beta_values = np.asarray([cell.distributions["beta"] for cell in cells])
     total = total_stack.mean(axis=0)
     inter = inter_stack.mean(axis=0)
     intra = intra_stack.mean(axis=0)
+    average_intra_conditional_shape = intra_conditional_stack.mean(axis=0)
     beta = float(beta_values.mean())
     distributions = add_distribution_densities(
         {
@@ -585,12 +620,17 @@ def aggregate_replica(
             "inter_conditional": _conditional_shape(inter, beta),
             "intra_conditional": _conditional_shape(intra, 1.0 - beta),
             "average_inter_conditional_shape": background_stack.mean(axis=0),
+            "average_intra_conditional_shape": average_intra_conditional_shape,
             "beta": beta,
             "aggregation": "equal_cell_mean",
+            "shape_aggregation": "normalize_each_cell_then_equal_cell_mean",
         },
         edges,
     )
     positive_intra = summarize_positive_intra(intra, edges)
+    intra_shape_summary = summarize_positive_intra(
+        average_intra_conditional_shape, edges
+    )
 
     per_cell_counts = [
         {
@@ -654,7 +694,10 @@ def aggregate_replica(
             "per_cell": per_cell_counts,
         },
         distributions=distributions,
-        summaries={"positive_intra": positive_intra},
+        summaries={
+            "positive_intra": positive_intra,
+            "intra_shape": intra_shape_summary,
+        },
         qc={
             "pass": reconstruction_error <= 1e-12,
             "status": "pass" if not flags else "pass_with_warnings",
@@ -670,7 +713,7 @@ def aggregate_replica(
         provenance=deepcopy(
             provenance if provenance is not None else getattr(first, "provenance", {})
         ),
-        schema_version="tau1-replica-cell-balanced-v4",
+        schema_version="tau1-replica-cell-balanced-v5",
     )
 
 def aggregate_genotype(
