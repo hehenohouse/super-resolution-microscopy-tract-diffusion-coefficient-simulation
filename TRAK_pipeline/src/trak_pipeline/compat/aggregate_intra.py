@@ -11,7 +11,7 @@ RELEASE=Path(__file__).resolve().parent
 CONTROL=RELEASE.parents[1] if RELEASE.parent.name=='releases' else RELEASE.parent
 DATA_ROOT=CONTROL.parent
 IO_ERROR=74
-SUPPORTED_CONFIG={'schema_version': 1, 'data_root': '@portable_data_root', 'scientific_fingerprint': '58bef6b94294f648f15e8637a744e71c6dd59a3fa0fd4e40c483a98d204cb7a3', 'molecule': 'TRAK1', 'condition_order': ['WT', 'TDK', 'MDK'], 'replicas': ['BR1', 'BR2', 'BR3'], 'scope': 'full', 'frames': 2500, 'tau_frames': 1, 'frame_interval_s': 0.02, 'pixel_size_nm': 117.0, 'distance_max_um': 3.0, 'distance_bins': 300, 'signed_area_min_abs': 0.01, 'positive_peak_min_exclusive': 0.0, 'groups': ['On', 'Not-on'], 'normalizations': ['signed', 'area', 'peak'], 'common_on_off_and_view_cohort': True, 'cell_weighting': 'equal', 'BR_weighting': 'equal', 'BR_area_order': 'normalize_equal_cell_signed_mean', 'BR_peak_internal_order': 'mean_of_cell_positive_peak_normalized_curves', 'condition_area_order': 'mean_of_BR_signed_area_normalized_canonical_curves', 'condition_peak_order': 'mean_of_BR_positive_peak_normalized_canonical_curves', 'SD_ddof': 1, 'uncertainty': 'descriptive_between_BR_SD; SEM_saved_not_plotted; no_time_bootstrap', 'zoom_max_um': 0.5, 'cross_condition_layout': 'On_NotOn_two_panels_WT_TDK_MDK_overlay', 'top_shared_y_limits': 'all_condition_means_plus_minus_SD; same_On_NotOn_full_zoom_within_view', 'progress_updates': 'after_each_committed_cell; completed_only_startup', 'source_conflicts': 'block_affected_summaries; never_choose_latest', 'new_cell_execution': False, 'image_format': 'PNG', 'data_retention': 'compact_full_precision_summaries_and_membership_no_point_data_or_bootstrap_duplication'}
+SUPPORTED_CONFIG={'schema_version': 1, 'data_root': '@portable_data_root', 'scientific_fingerprint': '58bef6b94294f648f15e8637a744e71c6dd59a3fa0fd4e40c483a98d204cb7a3', 'molecule': 'TRAK1', 'condition_order': ['WT', 'TDK', 'MDK'], 'replicas': ['BR1', 'BR2', 'BR3'], 'scope': 'full', 'frames': 2500, 'tau_frames': 1, 'frame_interval_s': 0.02, 'pixel_size_nm': 117.0, 'distance_max_um': 3.0, 'distance_bins': 300, 'signed_area_min_abs': 0.01, 'positive_peak_min_exclusive': 0.0, 'groups': ['On', 'Not-on'], 'normalizations': ['signed', 'area', 'peak'], 'common_on_off_and_view_cohort': True, 'cell_weighting': 'equal', 'BR_weighting': 'equal', 'method_id': 'hierarchy_summary', 'method_version': '2', 'BR_area_order': 'normalize_cells_then_equal_cell_mean', 'BR_peak_internal_order': 'mean_of_cell_positive_peak_normalized_curves', 'condition_area_order': 'equal_BR_mean_of_corrected_area_means', 'condition_peak_order': 'mean_of_BR_positive_peak_normalized_canonical_curves', 'SD_ddof': 1, 'uncertainty': 'descriptive_between_BR_SD; SEM_saved_not_plotted; no_time_bootstrap', 'zoom_max_um': 0.5, 'cross_condition_layout': 'On_NotOn_two_panels_WT_TDK_MDK_overlay', 'top_shared_y_limits': 'all_condition_means_plus_minus_SD; same_On_NotOn_full_zoom_within_view', 'progress_updates': 'after_each_committed_cell; completed_only_startup', 'source_conflicts': 'block_affected_summaries; never_choose_latest', 'new_cell_execution': False, 'image_format': 'PNG', 'data_retention': 'compact_full_precision_summaries_and_membership_no_point_data_or_bootstrap_duplication'}
 
 
 class SummaryBusy(RuntimeError):pass
@@ -207,8 +207,8 @@ def run(config_path,report_path=None):
         atomic_json(CONTROL/'intra_summary_status.json',report)
         return report
     code={name:sha(RELEASE/name) for name in ['aggregate_intra.py','intra_summary_core.py','intra_summary_plots.py']}
-    version=dict(schema_version=1,config=config,code_SHA256=code)
-    summary_id='v1_'+digest(version)[:12]
+    version=dict(schema_version=1,method_id='hierarchy_summary',method_version='2',config=config)
+    summary_id='v2_'+digest(version)[:12]
     result=build_summaries(CONTROL,RELEASE,config)
     records=[];errors=[]
     for node in result['nodes']:
@@ -223,7 +223,7 @@ def run(config_path,report_path=None):
             if io_failure(error):raise
             detail=dict(key=node['key'],error=str(error),traceback=traceback.format_exc())
             errors.append(detail);print('SUMMARY_ERROR '+json.dumps(detail),flush=True)
-    report=dict(all_passed=not errors,completed_utc=utc(),summary_id=summary_id,version=version,completed_only=True,new_cells_started=0,scientific_stages_run=[],nodes=records,errors=errors,discovery=result.get('discovery'),expected_cells=len(result['inventory']))
+    report=dict(all_passed=not errors,completed_utc=utc(),summary_id=summary_id,version=version,completed_only=True,new_cells_started=0,scientific_stages_run=[],code_audit_SHA256=code,nodes=records,errors=errors,discovery=result.get('discovery'),expected_cells=len(result['inventory']))
     target=CONTROL/'intra_summary_status.json'
     atomic_json(target,report)
     publish_global_index(report,config['molecule'])

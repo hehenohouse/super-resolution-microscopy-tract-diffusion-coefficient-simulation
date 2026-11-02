@@ -133,4 +133,217 @@ class AnalysisReportsTests(unittest.TestCase):
             for i,v in enumerate(values):rows.append(dict(sample_id=br+str(i),genotype='WT',BR=br,source_directory_relative=f'WT/P_WT_{br}/T{i}',on_percentage=v,first_mask_ROI_area_um2=v,mean_ROI_area_um2=v,selected=100,On=int(v),Not_on=100-int(v),unknown=0,QC_excluded=0,ROI_candidates=100))
         nodes=summaries._metric_nodes(rows,self.root);condition=next(n for n in nodes if n['level']=='condition');stat=next(r for r in condition['summary_records'] if r['metric']=='on_percentage');self.assertEqual(stat['mean'],55.);self.assertEqual(stat['n_cells_valid'],3);self.assertEqual(stat['n_BRs_valid'],2)
 
+
+    def _area_aggregation_fixture(self, include_invalid=False):
+        """Distinct signed shapes and unequal areas distinguish the two averaging orders."""
+        rows, cells, records, samples = [], {}, {}, []
+        unit_shapes = []
+        for values in ((150., -50., 0.), (0., 150., -50.), (-25., 0., 125.)):
+            curve = np.zeros(300, dtype=float)
+            curve[:3] = values
+            unit_shapes.append(curve)
+        spec = [('BR1', 'T1', .2, unit_shapes[0]),
+                ('BR1', 'T2', .8, unit_shapes[1]),
+                ('BR2', 'T1', .6, unit_shapes[2])]
+        if include_invalid:
+            spec.append(('BR1', 'T3', .4, unit_shapes[0]))
+        for br, cell_name, area, shape in spec:
+            sid = f'WT_PROTEIN_{br}_{cell_name}'
+            directory = self.root / f'WT/PROTEIN_WT_{br}/{cell_name}'
+            directory.mkdir(parents=True, exist_ok=True)
+            metadata = dict(molecule='PROTEIN', genotype='WT', BR=br, cell=cell_name)
+            row = dict(metadata, sample_id=sid,
+                       source_directory_relative=directory.relative_to(self.root).as_posix())
+            record = dict(row, status='complete', On=10, Not_on=20, unknown=0,
+                          QC_excluded=2, selected=30, ROI_candidates=32,
+                          on_percentage=100./3., first_mask_ROI_area_um2=1.,
+                          mean_ROI_area_um2=2.)
+            signed = area * shape
+            off = np.roll(signed, 3)
+            if include_invalid and cell_name == 'T3':
+                off = np.zeros(300)
+            rows.append(row)
+            records[sid] = record
+            cells[sid] = dict(sample_id=sid, status='complete', eligible=True,
+                              reasons=[], curves={'On': signed, 'Not-on': off},
+                              edges=np.linspace(0, 3, 301),
+                              method_definition={'fixture': 'same_cell_method'},
+                              result_digest='fixture_curve_' + sid)
+            samples.append(Sample(sid, directory, metadata, directory/'C1.tif',
+                                  directory/'C2.tif', directory/'cell.roi'))
+        return rows, cells, records, samples
+
+    def test_BR_area_mean_uses_equal_cell_normalized_shapes(self):
+        from trak_pipeline.compat import intra_summary_core as core
+        rows, cells, _, _ = self._area_aggregation_fixture()
+        nodes = core.summarize_cells(rows, cells, {'data_root': str(self.root)})
+        br = next(n for n in nodes if n['level'] == 'BR' and n['key'] == 'WT/BR1')
+        expected = np.zeros(300); expected[:3] = [75., 50., -25.]
+        actual = br['groups']['On']['area']['mean']
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-12)
+        self.assertAlmostEqual(float(np.sum(actual * core.WIDTHS)), 1., places=12)
+        self.assertLess(actual[2], 0., 'Signed negative bins must survive aggregation')
+        # The previous order would instead give [30, 110, -40] in these bins.
+        raw = np.stack([cells[r['sample_id']]['curves']['On'] for r in rows[:2]])
+        old = raw.mean(0) / np.sum(raw.mean(0) * core.WIDTHS)
+        self.assertFalse(np.allclose(actual, old))
+        # Correcting the area view must not change the signed or peak conventions.
+        np.testing.assert_allclose(br['groups']['On']['signed']['mean'], raw.mean(0),
+                                   rtol=0, atol=1e-12)
+        np.testing.assert_allclose(br['groups']['On']['peak']['mean'],
+                                   (raw / raw.max(axis=1)[:, None]).mean(0),
+                                   rtol=0, atol=1e-12)
+
+    def test_condition_area_mean_keeps_equal_BR_weights(self):
+        from trak_pipeline.compat import intra_summary_core as core
+        rows, cells, _, _ = self._area_aggregation_fixture()
+        nodes = core.summarize_cells(rows, cells, {'data_root': str(self.root)})
+        condition = next(n for n in nodes if n['level'] == 'condition' and n['key'] == 'WT')
+        brs = {n['BR']: n for n in nodes if n['level'] == 'BR' and n['condition'] == 'WT'}
+        expected = np.zeros(300); expected[:3] = [25., 25., 50.]
+        actual = condition['groups']['On']['area']
+        np.testing.assert_allclose(actual['mean'], expected, rtol=0, atol=1e-12)
+        self.assertEqual(actual['n'], 2)
+        for br_name in ('BR1', 'BR2'):
+            np.testing.assert_allclose(actual['series'][br_name],
+                                       brs[br_name]['groups']['On']['area']['mean'],
+                                       rtol=0, atol=1e-12)
+        # BR1 has two cells and BR2 has one: pooled-cell averaging is a different estimand.
+        pooled = np.mean([c['curves']['On'] / np.sum(c['curves']['On'] * core.WIDTHS)
+                          for c in cells.values()], axis=0)
+        self.assertFalse(np.allclose(actual['mean'], pooled))
+        self.assertAlmostEqual(float(np.sum(actual['mean'] * core.WIDTHS)), 1., places=12)
+        delta = np.zeros(300); delta[:3] = [100., 50., -150.]
+        np.testing.assert_allclose(actual['sd'], abs(delta) / np.sqrt(2.),
+                                   rtol=0, atol=1e-12)
+        np.testing.assert_allclose(actual['sem'], abs(delta) / 2.,
+                                   rtol=0, atol=1e-12)
+
+    def test_area_correction_keeps_one_common_cell_roster(self):
+        from trak_pipeline.compat import intra_summary_core as core
+        rows, cells, _, _ = self._area_aggregation_fixture(include_invalid=True)
+        nodes = core.summarize_cells(rows, cells, {'data_root': str(self.root)})
+        br = next(n for n in nodes if n['level'] == 'BR' and n['key'] == 'WT/BR1')
+        expected = {'WT_PROTEIN_BR1_T1', 'WT_PROTEIN_BR1_T2'}
+        self.assertEqual({m['sample_id'] for m in br['members']}, expected)
+        self.assertIn('WT_PROTEIN_BR1_T3', {m['sample_id'] for m in br['exclusions']})
+        for group in ('On', 'Not-on'):
+            for view in ('signed', 'area', 'peak'):
+                self.assertEqual(set(br['groups'][group][view]['series']), expected)
+
+    def test_completed_summary_area_correction_runs_no_cell_upstream(self):
+        from contextlib import ExitStack
+        from trak_pipeline import runner
+        _, cells, records, samples = self._area_aggregation_fixture()
+        def saved_cell(sample, artifacts, config):
+            return dict(records[sample.id]), dict(cells[sample.id])
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(summaries, '_load_cell', side_effect=saved_cell))
+            for module, name in [(distances, 'execute'),
+                                 (tardis, 'execute_decomposition'),
+                                 (tardis, 'execute_bootstrap'),
+                                 (statistics, 'execute'),
+                                 (statistics, 'execute_c1_mean'),
+                                 (runner, 'run_sample'), (runner, '_execute')]:
+                stack.enter_context(patch.object(module, name,
+                    side_effect=AssertionError('Completed summary called cell upstream: ' + name)))
+            result = summaries.summarize(self.config, samples)
+        self.assertEqual(result['upstream_stages_run'], [])
+        self.assertEqual(result['new_cells_started'], 0)
+        manifest = json.loads(Path(result['manifest']).read_text())
+        condition = next(n for n in manifest['nodes']
+                         if n['level'] == 'condition' and n['key'] == 'WT')
+        saved = json.loads((self.root / condition['data'] / 'intra_node.json').read_text())
+        expected = np.zeros(300); expected[:3] = [25., 25., 50.]
+        np.testing.assert_allclose(saved['groups']['On']['area']['mean'], expected,
+                                   rtol=0, atol=1e-12)
+
+
+    def test_area_aggregation_version_and_old_order_are_not_interchangeable(self):
+        expected = dict(method_id='hierarchy_summary', method_version='2',
+                        area_order='normalize_cells_then_equal_cell_mean',
+                        condition_area_order='equal_BR_mean_of_corrected_area_means')
+        configured = summaries._summary_parameters(dict(self.config, summary=expected))
+        for key, value in expected.items():
+            self.assertEqual(configured[key], value)
+        for field, old_value in [('area_order', 'normalize_BR_signed_mean'),
+                                 ('method_version', '1')]:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Unsupported hierarchy summary'):
+                summaries._summary_parameters(dict(self.config, summary={field: old_value}))
+        # Otherwise unchanged scientific inputs must not select a v1 summary cache.
+        _, _, _, samples = self._area_aggregation_fixture()
+        entries = [(sample, {'statistics': Artifact('stats_'+sample.id, 'statistics', {}),
+                             'decomposition': Artifact('curve_'+sample.id, 'decomposition', {})})
+                   for sample in samples]
+        old_parameters = dict(configured, method_version='1',
+                              area_order='normalize_BR_signed_mean')
+        old_parameters.pop('condition_area_order')
+        old_signature = summaries._summary_input_signature(
+            self.config, entries, old_parameters, self.root)
+        new_signature = summaries._summary_input_signature(
+            self.config, entries, configured, self.root)
+        self.assertIsNotNone(old_signature)
+        self.assertNotEqual(new_signature, old_signature)
+        for altered in (dict(configured, method_version='1'),
+                        dict(configured, area_order='normalize_BR_signed_mean')):
+            self.assertNotEqual(new_signature, summaries._summary_input_signature(
+                self.config, entries, altered, self.root))
+
+
+
+    def test_refresh_rejects_old_or_missing_area_method_without_execution(self):
+        import sys, types
+        from contextlib import ExitStack
+        from unittest.mock import Mock
+        expected = summaries._summary_parameters(self.config)
+        manifest = self.root / 'refresh_guard_manifest.json'
+        plotter = types.ModuleType('intra_summary_plots')
+        plotter.render_node = Mock(side_effect=AssertionError('Rendered incompatible summary'))
+        writer = types.ModuleType('export_reader_tables')
+        writer.write_workbook = Mock(side_effect=AssertionError('Wrote incompatible summary'))
+        matplotlib = types.ModuleType('matplotlib')
+        matplotlib.use = Mock()
+        forbidden = AssertionError('Refresh invoked a scientific or cell-loading step')
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(sys.modules, {
+                'intra_summary_plots': plotter,
+                'export_reader_tables': writer,
+                'matplotlib': matplotlib}))
+            metric_plot = stack.enter_context(patch.object(
+                summaries, '_metric_plot', side_effect=AssertionError('Rendered incompatible metrics')))
+            for module, name in [(summaries, 'summarize'), (summaries, '_load_cell'),
+                                 (distances, 'execute'), (tardis, 'execute_decomposition'),
+                                 (tardis, 'execute_bootstrap'), (statistics, 'execute'),
+                                 (statistics, 'execute_c1_mean')]:
+                stack.enter_context(patch.object(module, name, side_effect=forbidden))
+            legacy = dict(expected, method_version='1',
+                          area_order='normalize_BR_signed_mean')
+            legacy.pop('condition_area_order')
+            for method in (None, legacy,
+                           dict(expected, area_order='normalize_BR_signed_mean')):
+                saved = dict(summary_id='fixture_v1', nodes=[])
+                if method is not None:
+                    saved['method'] = method
+                manifest.write_text(json.dumps(saved))
+                with self.subTest(method=method), self.assertRaisesRegex(
+                        ValueError, 'scientific method is missing or incompatible'):
+                    summaries.refresh(self.config, manifest)
+                self.assertFalse((manifest.parent / 'publication_report.json').exists())
+            plotter.render_node.assert_not_called()
+            writer.write_workbook.assert_not_called()
+            metric_plot.assert_not_called()
+            matplotlib.use.assert_not_called()
+            # A valid v2 manifest remains a legal pure refresh even with no nodes.
+            manifest.write_text(json.dumps(dict(
+                summary_id='fixture_v2', nodes=[], method=expected)))
+            result = summaries.refresh(self.config, manifest)
+            self.assertEqual(result['summary_id'], 'fixture_v2')
+            self.assertEqual(result['nodes'], [])
+            self.assertEqual(result['scientific_stage_calls'], 0)
+            self.assertEqual(result['new_cells_started'], 0)
+            plotter.render_node.assert_not_called()
+            writer.write_workbook.assert_not_called()
+            metric_plot.assert_not_called()
+
+
 if __name__=='__main__':unittest.main()

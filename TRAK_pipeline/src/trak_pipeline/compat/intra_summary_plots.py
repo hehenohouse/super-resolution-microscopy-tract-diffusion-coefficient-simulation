@@ -116,8 +116,8 @@ def _progress(node):
 def _caption(node, view):
     if node["level"] == "BR":
         if view == "area":
-            return ("Bold: equal-cell signed mean, then signed-area normalization. "
-                    "Thin: normalized individual-cell references; their mean is not the bold line.")
+            return ("Bold: equal-cell mean of individually signed-area-normalized curves. "
+                    "Thin: each cell normalized over 0-3 um. No final re-normalization.")
         if view == "peak":
             return "Thin: each cell divided by its full-range positive peak. Bold: their equal-cell mean."
         return "Thin: individual cells. Bold: equal-cell mean signed Intra."
@@ -187,7 +187,7 @@ def _plot_axis(ax, node, group, view, x):
                                 linewidth=0, label="+/-1 BR sample SD", zorder=2)
             name = "Equal-cell mean" if node["level"] == "BR" else "Equal-BR mean"
             if node["level"] == "BR" and view == "area":
-                name = "Signed mean, then area-normalized"
+                name = "Mean of cell-area-normalized curves"
             ax.plot(x, mean, color=color, linewidth=2.3, label=name, zorder=4)
         else:
             ax.text(0.5, 0.5, "No available summary curve\nSee exclusions and progress records",

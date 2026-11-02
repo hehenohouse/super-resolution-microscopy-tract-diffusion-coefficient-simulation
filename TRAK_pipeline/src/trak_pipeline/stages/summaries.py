@@ -60,19 +60,19 @@ def _samples(samples,artifacts_by_sample):
 
 
 def _summary_parameters(config):
-    """Method v1 rejects scientific variants it cannot actually implement."""
-    defaults=dict(cell_weighting='equal',condition_weighting='equal_replica',BR_weighting='equal',
+    """Method v2 enforces cell-first area normalization and equal-BR averaging."""
+    defaults=dict(method_id='hierarchy_summary',method_version='2',cell_weighting='equal',condition_weighting='equal_replica',BR_weighting='equal',
         count_main_summary='pooled_per_cell',count_additional_mean='equal_replica',
         on_percentage_denominator='On+Not_on',intra_views=['signed','signed_area','peak'],
         intra_groups=['On','Not-on'],signed_area_min_abs=.01,minimum_signed_area_abs=.01,
-        require_positive_peak=True,require_both_groups=True,area_order='normalize_BR_signed_mean',
+        require_positive_peak=True,require_both_groups=True,area_order='normalize_cells_then_equal_cell_mean',condition_area_order='equal_BR_mean_of_corrected_area_means',
         peak_within_BR='mean_cell_own_positive_peak_normalized',negative_bins_retained=True,SD_ddof=1)
     supplied=config.get('summary',{})
     if not isinstance(supplied,dict):raise ValueError('summary scientific parameters must be a mapping')
     for key,value in supplied.items():
         if key not in defaults:raise ValueError('Unsupported hierarchy summary scientific parameter: '+key)
-        if value!=defaults[key]:raise ValueError('Unsupported hierarchy summary scientific setting '+key+'; method v1 requires '+str(defaults[key])+'; another method version is required')
-    if list(config.get('conditions',['WT','TDK','MDK']))!=['WT','TDK','MDK']:raise ValueError('Hierarchy summary method v1 supports conditions WT, TDK, MDK in that order')
+        if value!=defaults[key]:raise ValueError('Unsupported hierarchy summary scientific setting '+key+'; method v2 requires '+str(defaults[key])+'; another method version is required')
+    if list(config.get('conditions',['WT','TDK','MDK']))!=['WT','TDK','MDK']:raise ValueError('Hierarchy summary method v2 supports conditions WT, TDK, MDK in that order')
     return defaults
 
 
@@ -221,7 +221,7 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
     if edges.shape!=(301,) or not np.allclose(edges,np.linspace(0,3,301),rtol=0,atol=1e-12):raise ValueError('Current hierarchy summary method supports the frozen 0–3 µm / 300-bin definition only')
     nodeobjects=core.summarize_cells(inventory,cells,dict(data_root=str(root)))
     for node in nodeobjects:node['molecule']=config.get('molecule',records[0].get('molecule','') if records else '')
-    summaryid=digest(dict(method_id='hierarchy_summary',method_version='1',parameters=method_config,scientific_definitions=sorted(methods)))[:16]
+    summaryid=digest(dict(method_id='hierarchy_summary',method_version='2',parameters=method_config,scientific_definitions=sorted(methods)))[:16]
     manifestdir.mkdir(parents=True,exist_ok=True)
     metricnodes=_metric_nodes(records,root);jobs=[];nodes=[]
     from reader_table_data import build_reader_tables
@@ -305,6 +305,8 @@ def refresh(config,manifest=None):
     science_paths();root=Path(config['data_root']).resolve();path=Path(manifest) if manifest else Path(config.get('control_root',root/'_batch_pipeline'))/'modular_summaries/summary_manifest.json'
     if not path.is_file():raise FileNotFoundError('Saved summary manifest is missing; run summarize explicitly. refresh performs no science')
     saved=load_json(path);reports=[];missing=[]
+    if saved.get('method') != _summary_parameters(config):
+        raise ValueError('Saved summary scientific method is missing or incompatible; run summarize explicitly before refresh. refresh performs no science')
     from export_reader_tables import write_workbook
     from intra_summary_plots import render_node
     import matplotlib

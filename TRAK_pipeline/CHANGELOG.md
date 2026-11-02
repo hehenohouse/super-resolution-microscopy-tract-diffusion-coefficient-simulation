@@ -4,6 +4,49 @@ This log separates production changes, reporting repairs and isolated experiment
 Historical dates describe recorded work, not new analysis during publication.
 The November 2 update prepares English source documentation for GitHub; scientific data remain on My Book.
 
+## 2026-11-02 — Correct cell-first area normalization (summary method v2)
+
+### Changed
+
+- Correct the BR area mean to average individually signed-area-normalized cell curves.
+- Define each cell shape as signed Intra divided by its own signed area over 0–3 um.
+- Give each eligible cell one equal weight within its BR.
+- Average corrected BR area means with equal BR weights at condition level.
+- Do not pool cells across BRs with different cell counts.
+- Do not normalize either mean again: its inputs already have unit signed area.
+- Replace the prior BR normalize(mean(raw signed Intra)) operation for the area view.
+- With positive cell areas, that old order implicitly gave larger-area cells more shape weight.
+- Make the displayed thick BR area line the direct mean of normalized thin cell lines.
+- Replace the old “Signed mean, then area-normalized” area legend/caption.
+- Version this as hierarchy summary method 2, a scientific averaging correction.
+- Record area_order="normalize_cells_then_equal_cell_mean".
+- Record condition_area_order="equal_BR_mean_of_corrected_area_means".
+- Require distinct v2 hierarchy cache identities rather than reusing v1 area means.
+- Rebuild affected hierarchy science from completed cell curves before republishing figures.
+- Add tools/update_intra_equal_cell.py --config ... --completed-only for this targeted correction.
+- Separate --compute-only aggregation from --publish-only rendering.
+- Prepare 9 BR, 3 condition and 1 top comparison Intra node per protein.
+- Keep scalar summaries and Excel outside that targeted update.
+- Reject old/missing summary-method metadata during pure refresh instead of repainting v1 as v2.
+- Retain prior v1 result directories; new active-release publication is a separate step.
+
+### Retained
+
+- Original localization fits, UIDs, QC, position errors and coordinates.
+- Masks, frame mapping, 1-SE assignments, group counts and On percentages.
+- Per-cell signed Intra, beta, distance counts and temporal-bootstrap products.
+- Existing signed-mean and peak-normalization conventions.
+- Shared eligibility rosters across On/Not-on and all views, original guards and unavailable reasons.
+- Negative bins, full precision and between-BR sample SD/SEM.
+- First/time-mean ROI-mask areas and per-cell localization-count definitions.
+- Zero upstream cell-science calls for completed-only hierarchy updates.
+- Zero scientific calls for pure refresh; missing science still requires explicit summarize.
+- Mac/Windows shared implementation, external-drive storage and text-only GitHub scope.
+
+This entry defines the correction. Regeneration, regression-check and publication
+completion records are written after those operations; documentation alone does
+not claim their completion.
+
 ## 2026-11-02 — Source publication and documentation
 
 ### Changed
@@ -148,7 +191,10 @@ The November 2 update prepares English source documentation for GitHub; scientif
 - Full-film mean ROI area is time weighted over all required mask blocks.
 - Missing required blocks make the full-film mean unavailable rather than shortening its denominator.
 
-### Intra aggregation retained
+### Historical Intra aggregation — v1 area rules superseded on 2026-11-02
+
+The following bullets record v1. Its area-view order is superseded by summary
+method v2 above; the signed and peak rules remain unchanged.
 
 - BR canonical signed Intra is the arithmetic mean of eligible cell signed curves.
 - Localization counts and pair counts do not weight the cells.
@@ -305,3 +351,6 @@ This table records current TRAK1/TRAK2 configuration, not a new calibration.
 - Raw data and result exports remain excluded from GitHub publication.
 - Historical fixture/audit/completion records remain on My Book as evidence.
 - Documentation changes alone do not change method versions or invalidate compatible scientific caches.
+
+
+Completed on 2026-11-02: six focused regression tests passed; corrected saved-curve hierarchies were regenerated for all 105 TRAK1 and 106 TRAK2 cells (26 nodes, 312 PNGs). Prior cohorts and every signed/peak saved row were unchanged. Upstream cell-science calls, new cells and scalar/Excel rewrites were zero. V1 numeric result directories are retained.

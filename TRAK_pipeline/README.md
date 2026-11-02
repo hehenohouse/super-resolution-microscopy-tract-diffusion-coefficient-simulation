@@ -77,6 +77,67 @@ A scientific artifact is identified by its **explicit method ID/version, canonic
 
 The v1 distance method supports **τ = 1 original frame only**. Changing a configuration to another τ is rejected until a new implementation and method version are supplied. Resampling never creates adjacent frame pairs across sampled block joins.
 
+## Area-normalized Intra aggregation — summary method v2
+
+Each eligible cell is normalized **before** the BR mean is calculated. Let
+$I_i(r)$ be cell $i$'s signed Intra density and
+$A_i=\sum_k I_i(r_k)\Delta r_k$ its signed area over the full 0–3 um grid:
+
+$$
+g_i(r)=I_i(r)/A_i,\qquad
+M_{\mathrm{BR}}(r)=\frac{1}{N_{\mathrm{cells}}}\sum_i g_i(r).
+$$
+
+The condition area curve is the equal-BR mean of those corrected BR area curves:
+
+$$
+M_{\mathrm{condition}}(r)=\frac{1}{N_{\mathrm{BR}}}
+\sum_b M_{\mathrm{BR},b}(r).
+$$
+
+There is **no further area normalization** of either mean: averaging unit-area
+curves already preserves unit area. BRs with different cell counts still receive
+equal weight at condition level. The BR thick area line is the arithmetic mean
+of its individually normalized thin cell lines.
+
+This replaces v1's mean(signed Intra)/area(mean(signed Intra)) for the area view.
+When cell signed areas are positive, that old expression implicitly weighted
+normalized cell shapes by their signed areas. It was not an equal-cell shape mean.
+The correction changes scientific hierarchy statistics, not just a legend.
+
+The hierarchy settings are method_version="2",
+area_order="normalize_cells_then_equal_cell_mean" and
+condition_area_order="equal_BR_mean_of_corrected_area_means". They require new
+compatible summary identities; v1 area-summary caches cannot substitute for v2.
+
+Signed means and existing peak-normalization rules are unchanged. Eligibility,
+the shared On/Not-on/all-view roster, negative bins, unavailable values,
+between-BR sample SD/SEM and original cell results are retained. This does not
+refit localizations, alter masks/assignments, recalculate single-cell TARDIS,
+change On%, or modify first/mean ROI mask area. Update hierarchy science
+explicitly from completed cell products, then publish; pure refresh still
+performs no scientific computation. An old or missing hierarchy method in a saved
+manifest is reported as incompatible by refresh; it is not relabeled as v2 or
+silently recalculated.
+
+For the completed TRAK1/TRAK2 datasets, the targeted entrypoint updates only the
+Intra hierarchy from saved cell curves. From this package directory, use the
+existing science Python environment:
+
+```sh
+python -B tools/update_intra_equal_cell.py --config configs/TRAK1.json --completed-only
+python -B tools/update_intra_equal_cell.py --config configs/TRAK2.json --completed-only
+```
+
+The default mode explicitly calculates the 13 Intra nodes per protein (9 BRs,
+3 conditions and 1 top-level comparison), then publishes full/zoom figures and
+On/Not-on overlays. `--compute-only` persists the corrected hierarchy statistics
+without plotting; `--publish-only` reads those saved v2 products and only
+publishes. Neither mode calls upstream cell science or updates scalar metrics
+or Excel workbooks. Earlier v1 data directories remain as historical results.
+A new frozen release must be activated before the normal launchers use the
+correction; the targeted command does not itself activate a release.
+
 ## Scientific conventions retained
 
 - Default grouping uses the original per-localization k=1 diagonal SE ellipse and contact with unions of closed pixel squares, including tangency. It is spatial compatibility, not binding.
@@ -135,3 +196,6 @@ python -B tools/launch.py refresh --config configs/TRAK2.json --cell WT_TRAK2_BR
 This explicitly rebuilds saved plot statistics only; compatible localization,
 mask, distance, decomposition, and bootstrap products are reused. No such
 preparation is automatically performed by refresh.
+
+
+Completed on 2026-11-02: six focused regression tests passed; corrected saved-curve hierarchies were regenerated for all 105 TRAK1 and 106 TRAK2 cells (26 nodes, 312 PNGs). Prior cohorts and every signed/peak saved row were unchanged. Upstream cell-science calls, new cells and scalar/Excel rewrites were zero. V1 numeric result directories are retained.

@@ -19,6 +19,9 @@ EDGES = np.linspace(0.0, 3.0, 301)
 X = (EDGES[:-1] + EDGES[1:]) / 2
 WIDTHS = np.diff(EDGES)
 SCHEMA_VERSION = 1
+SUMMARY_METHOD_VERSION = '2'
+AREA_ORDER = 'normalize_cells_then_equal_cell_mean'
+CONDITION_AREA_ORDER = 'equal_BR_mean_of_corrected_area_means'
 
 
 class SummarySourceError(ValueError):
@@ -366,7 +369,7 @@ def _finalize(node):
     node['progress']['status'] = _status(node)
     # All saved identities use relative paths and stable scientific values only.
     node['signature_payload'] = {
-        'schema_version': SCHEMA_VERSION, 'key': node['key'], 'progress': node['progress'],
+        'schema_version': SCHEMA_VERSION, 'aggregation_method': {'method_id': 'hierarchy_summary', 'method_version': SUMMARY_METHOD_VERSION, 'area_order': AREA_ORDER, 'condition_area_order': CONDITION_AREA_ORDER}, 'key': node['key'], 'progress': node['progress'],
         'members': node['members'], 'exclusions': node['exclusions'],
         'sources': sorted(node['source_refs'], key=lambda r: (r['relative_path'], r.get('sha256', ''))),
         'blocked': node['blocked'],
@@ -408,16 +411,10 @@ def summarize_cells(inventory, cells, config=None):
             if selected and not node['blocked']:
                 for group in GROUPS:
                     raw = {sid: np.asarray(cell['curves'][group], dtype=np.float64) for sid, cell in selected}
-                    canonical = np.mean(np.stack(list(raw.values())), axis=0)
                     node['groups'][group]['signed'] = _mean_view(raw)
+                    # Give every eligible cell one equal weight in the area-shape view.
                     area_series = {sid: curve / np.sum(curve * WIDTHS) for sid, curve in raw.items()}
-                    area_view = _empty_view()
-                    area_view['series'] = area_series
-                    area_view['n'] = len(raw)
-                    # Normalize the BR signed mean, not the mean of cell-normalized curves.
-                    if abs(float(np.sum(canonical * WIDTHS))) > 0.01:
-                        area_view['mean'] = canonical / np.sum(canonical * WIDTHS)
-                    node['groups'][group]['area'] = area_view
+                    node['groups'][group]['area'] = _mean_view(area_series)
                     node['groups'][group]['peak'] = _mean_view({sid: curve / np.max(curve) for sid, curve in raw.items()})
                 canonical_curves = {g: node['groups'][g]['signed']['mean'] for g in GROUPS}
                 node['canonical_eligible'], node['canonical_exclusion_reasons'] = evaluate_curves(canonical_curves)
@@ -440,7 +437,7 @@ def summarize_cells(inventory, cells, config=None):
             for group in GROUPS:
                 raw = {n['BR']: n['groups'][group]['signed']['mean'] for n in eligible_brs}
                 node['groups'][group]['signed'] = _mean_view(raw, True)
-                node['groups'][group]['area'] = _mean_view({BR: curve / np.sum(curve * WIDTHS) for BR, curve in raw.items()}, True)
+                node['groups'][group]['area'] = _mean_view({child['BR']: child['groups'][group]['area']['mean'] for child in eligible_brs}, True)
                 node['groups'][group]['peak'] = _mean_view({BR: curve / np.max(curve) for BR, curve in raw.items()}, True)
             node['available'] = True
         condition_nodes.append(_finalize(node))

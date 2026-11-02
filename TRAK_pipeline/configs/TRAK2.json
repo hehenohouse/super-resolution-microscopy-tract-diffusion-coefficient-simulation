@@ -3154,7 +3154,11 @@
     ],
     "signed_area_min_abs": 0.01,
     "require_positive_peak": true,
-    "require_both_groups": true
+    "require_both_groups": true,
+    "method_id": "hierarchy_summary",
+    "method_version": "2",
+    "area_order": "normalize_cells_then_equal_cell_mean",
+    "condition_area_order": "equal_BR_mean_of_corrected_area_means"
   },
   "conditions": [
     "WT",

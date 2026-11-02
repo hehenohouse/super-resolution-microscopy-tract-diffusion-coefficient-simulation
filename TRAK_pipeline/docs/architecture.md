@@ -54,6 +54,38 @@ Filtering, normalization, histogram bins, membership and cell/BR weighting belon
 
 Group membership is method-specific. Different scientific methods cannot silently share a summary roster. Missing required mask frames make the full-movie area mean unavailable, rather than silently dropping acquisition time; an invalid first block has no first-area estimate. Existing On%, first/time-mean ROI mask area, per-cell counts and pooled-cell/equal-replica localization means retain their existing definitions. Scientific completion and publication completion are separate, so a missing figure or workbook does not discard completed fitting or segmentation.
 
+## Area hierarchy scientific method v2
+
+For the area view, normalize each eligible cell's signed Intra by that cell's
+signed area on the full 0–3 um grid, then calculate the arithmetic mean within
+BR. At condition level, average those corrected BR area means with one weight
+per BR. Do not substitute a pooled-cell mean across BRs, normalize the raw BR
+signed mean, or normalize the final unit-area mean again.
+
+The scientific area branch is:
+
+    saved cell signed Intra
+      -> cell signed-area normalization
+      -> equal-cell BR area mean
+      -> equal-BR condition area mean
+      -> saved scientific summary -> presentation
+
+V1's BR normalize(mean(raw signed curves)) is superseded for this view. With
+positive cell areas it was an area-weighted mean of normalized shapes. V2 gives
+each eligible cell the same shape weight within BR.
+
+The explicit hierarchy method version is 2. Its scientific parameters are
+area_order="normalize_cells_then_equal_cell_mean" and
+condition_area_order="equal_BR_mean_of_corrected_area_means". Summary/input/numeric
+identities change independently of source hashes; unchanged single-cell artifact
+IDs are reused. Rendering reads the saved corrected mean and cannot silently
+repair or recalculate a v1 scientific product.
+
+The signed branch still averages signed curves. Existing peak rules remain
+unchanged. The common valid roster, guards, negative bins, unavailable-value
+rules and between-BR sample SD/SEM are retained. On%, ROI-mask areas and
+localization counts keep their separate metric definitions.
+
 ## Storage, interruption and migration
 
 All controlled writes, scratch/cache directories, logs and state stay on the external drive. Writes are atomic with unique temporary names; independent phases have separate state files. Writable memmaps are closed before committed metadata is captured. Existing protected-path, subprocess cancellation, failure continuation and clean-stop behavior are retained.
