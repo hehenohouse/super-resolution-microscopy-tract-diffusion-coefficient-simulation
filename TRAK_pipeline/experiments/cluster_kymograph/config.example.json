@@ -1,0 +1,60 @@
+{
+  "sample_id": "WT_TRAK2_BR1_T5",
+  "cell_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "output_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "C2_file": "<CONFIGURE_EXTERNAL_PATH>",
+  "master_localizations": "<CONFIGURE_EXTERNAL_PATH>",
+  "localization_subset": "<CONFIGURE_EXTERNAL_PATH>",
+  "selection_record": "<CONFIGURE_EXTERNAL_PATH>",
+  "center_xy_px": [
+    134.125,
+    226.875
+  ],
+  "localization_window_xyxy_px": [
+    132.125,
+    224.875,
+    136.125,
+    228.875
+  ],
+  "frames": 2500,
+  "pixel_size_nm": 117,
+  "frame_interval_s": 0.02,
+  "X_profile": {
+    "x_slice": [
+      128,
+      140
+    ],
+    "y_slice": [
+      225,
+      229
+    ]
+  },
+  "Y_profile": {
+    "x_slice": [
+      133,
+      137
+    ],
+    "y_slice": [
+      221,
+      233
+    ]
+  },
+  "display_ADU": [
+    406,
+    554
+  ],
+  "check_frames": [
+    0,
+    49,
+    94,
+    95,
+    196,
+    200,
+    1200,
+    2000,
+    2450,
+    2499
+  ],
+  "figure_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "figure_name": "WT_TRAK2_BR1_T5_cluster_C2_XY_kymograph_20261026T170753Z.png"
+}

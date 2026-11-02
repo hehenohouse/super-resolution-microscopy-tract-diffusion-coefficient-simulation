@@ -1,0 +1,8 @@
+{
+  "types": "src/trak_pipeline/types.py",
+  "stage_callable": "execute(ctx: StageContext) -> StageResult",
+  "artifact_files": "Named paths in Artifact.files; legacy paths read-only, new stage files owned by output_dir",
+  "config": "Resolved dictionary with data_root/control_root/package_root, acquisition, methods, style, runtime, legacy_release; all stage parameters from methods[stage]",
+  "runtime": "Four existing executable environments, no installation",
+  "scientific_identity": "Explicit method/version + canonical parameters + upstream scientific IDs; source hashes audit only"
+}

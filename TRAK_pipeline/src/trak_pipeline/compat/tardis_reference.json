@@ -1,0 +1,76 @@
+{
+  "frames": 2500,
+  "segment_frames": 250,
+  "pixel_size_nm": 117.0,
+  "frame_interval_s": 0.02,
+  "tau_frames": 1,
+  "distance_max_um": 3.0,
+  "distance_bins": 300,
+  "background_fit_um": [
+    2.1,
+    3.0
+  ],
+  "minimum_background_tail_ordered_pairs": 100,
+  "minimum_total_tail_pairs": 100,
+  "signed_area_min_abs": 0.01,
+  "main_area_min_positive": 0.01,
+  "main_region_um": [
+    0.0,
+    0.1
+  ],
+  "tail_region_um": [
+    0.1,
+    0.25
+  ],
+  "minimum_joint_valid_fraction": 0.95,
+  "group_rule": "Frozen postmin32_pointwise_label; k1 own position-SE ellipse contact; no probability filter or weighting",
+  "total_rule": "Both endpoints in same group, true original adjacent frames, keep exact zero cross-frame distances",
+  "background_rule": "Ordered same-frame pairs within group, remove ALL exact zero distances including self and coincident points",
+  "normalization_rule": "Independently normalize pooled Total and B raw counts to unit mass on 0-3 um; no frame-wise normalization or frame equal-weighting",
+  "beta_rule": "Tail least squares dot(T,B)/dot(B,B), clipped [0,1]; save raw beta",
+  "shape_rule": "Signed Intra divided by signed area on all 300 bins; retain negative bins; abs(area)<=0.01 unavailable",
+  "background_compatibility_rule": "Descriptive normalized tail L1/cosine and tail-bin residuals; does not validate dynamic-mask background exchangeability",
+  "bootstrap": {
+    "replicates": 1000,
+    "seed": 20261007,
+    "block_lengths_frames": [
+      10,
+      25,
+      50
+    ],
+    "primary_block_frames": 25,
+    "strata_frames": 250,
+    "method": "Reuse identical saved paired nonoverlapping-block weights within each 250-frame stratum",
+    "boundary_rule": "Sum only source-block-internal true adjacent pairs; never create adjacency at block joins",
+    "interval_interpretation": "Exploratory pointwise 2.5-97.5 percentile ranges; temporal bootstrap coverage not calibrated; no p values or simultaneous-significance claims; conditional on fixed masks and labels; does not propagate segmentation/registration uncertainty"
+  },
+  "registration_status": "exploratory_identity_registration_unverified",
+  "mask_version": "Nellie_broad_support50_ge10_postmin32_holes_lt64_20261021T140910Z",
+  "calibration_status": "manufacturer_nominal",
+  "checkpoint_frames": 250,
+  "output_relative_directory": "analysis_results/mito_tardis_postmin32",
+  "refitting": false,
+  "resegmenting": false,
+  "tracking": false,
+  "probability_filtering": false,
+  "uncertainty_deconvolution": false,
+  "diffusion_correction": false,
+  "biological_state_fitting": false,
+  "formal_inference": false,
+  "classification_label_field": "postmin32_pointwise_label",
+  "mask_label": "support50>=10 / post-min32",
+  "mask_diagnostic_candidates": [
+    [
+      "support50_postmin32",
+      "#246B9E",
+      "Adjacent 1s support blocks"
+    ]
+  ],
+  "mask_diagnostics_block_boundaries_only": true,
+  "mask_agreement_title": "ROI IoU between consecutive 1s support blocks",
+  "mask_diagnostic_footer": "Masks are fixed within50frames. Block-boundary IoU is descriptive; background exchangeability is unvalidated.",
+  "run_prefix": "WT_TRAK2_BR1_T1_C2_postmin32_On_NotOn_tau1",
+  "pointer_prefix": "latest_postmin32_WT_TRAK2_BR1_T1",
+  "shared_weights_sha256": "ec2bc8d084c21a1ad95e053309c63642ca634bc2ae630d48f469aceb04e90c9f",
+  "_configuration_status": "ready"
+}

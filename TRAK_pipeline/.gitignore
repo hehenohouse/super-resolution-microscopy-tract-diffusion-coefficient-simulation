@@ -1,0 +1,24 @@
+._*
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+runtime/
+logs/
+cache/
+work/
+*.log
+validation/*
+!validation/.gitkeep
+analyses/**/data/
+analyses/**/figures/
+analyses/**/outputs/
+
+# Explicit text-only GitHub scope
+*.class
+*.npz
+*.npy
+*.xlsx
+CURRENT_RELEASE.json
+releases/

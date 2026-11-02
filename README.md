@@ -1,5 +1,16 @@
 # SRM Tracking Simulation Framework
 
+## Current real-image pipeline — 2026-11-02
+
+**Text-only source archive:** compiled Java classes, bootstrap NPZ files, Excel
+templates, scientific data and deployment bundles remain on My Book.
+
+
+The shared TRAK1/TRAK2 localization, mitochondrial masking, spatial grouping and TARDIS source is archived in [TRAK_pipeline](TRAK_pipeline/README.md). See the [detailed change log](TRAK_pipeline/CHANGELOG.md) for changed and retained methods, [architecture](TRAK_pipeline/docs/architecture.md) and [experimental archive](TRAK_pipeline/experiments/README.md).
+
+Normal batching retains original-C1 support>=10/50/post-min32/holes<64 masks and original1SE ellipse assignment. Experiments remain opt-in. Raw data, result artifacts and installed software stay on the external drive. This source publication does not rerun211cells or alter the simulation/MAT workflows below.
+
+
 A modular framework for constructing controlled super-resolution microscopy (SRM) particle-tracking simulations.
 
 The project is not a single physical model. Each simulation **scenario** combines reusable components. Standard scenarios use four components, while coupled scenarios may also include a shared scene model:

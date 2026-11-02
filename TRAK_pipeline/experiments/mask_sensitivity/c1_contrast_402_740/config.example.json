@@ -1,0 +1,75 @@
+{
+  "sample_id": "WT_TRAK2_BR1_T5",
+  "sample_name": "WT TRAK2 BR1 cell T5",
+  "run_id": "C1_contrast_402_740_20261026T202633Z",
+  "run_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "cell_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_output": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_C1": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_C2": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_ROI": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_release": "<CONFIGURE_EXTERNAL_PATH>",
+  "block_starts": [
+    0,
+    1200,
+    2450
+  ],
+  "sample_frames": [
+    0,
+    24,
+    49,
+    1200,
+    1224,
+    1249,
+    2450,
+    2474,
+    2498,
+    2499
+  ],
+  "percentile_sample_frames": [
+    0,
+    24,
+    49,
+    1200,
+    1224,
+    1249,
+    2450,
+    2474,
+    2499
+  ],
+  "contrast_low_adu": 402,
+  "contrast_high_adu": 740,
+  "output_dtype": "uint16",
+  "formula": "rint(65535 * clip((float64(I) - 402) / 338, 0, 1)).astype(uint16)",
+  "rounding": "nearest, ties to even (numpy.rint)",
+  "contrast_selection": "Pooled ROI nonzero intensity P1=402, P99.9=740 from nine fixed original pages; sensitivity test, not background calibration",
+  "shape_TYX": [
+    2500,
+    684,
+    428
+  ],
+  "pixel_size_nm": 117.0,
+  "frame_interval_s": 0.02,
+  "crop_xyxy_px": [
+    20,
+    77,
+    392,
+    536
+  ],
+  "display_original_C1_ADU": [
+    407,
+    651
+  ],
+  "display_scale": 2,
+  "native_chunk_frames": 25,
+  "support_frames": 50,
+  "support_minimum": 10,
+  "foreground_min_pixels": 32,
+  "hole_exclusive_max_pixels": 64,
+  "recipe": "native_broad_support50_ge10_postmin32_FG8_holes_lt64_BG4",
+  "registration_status": "C1/C2 identity registration independently unverified",
+  "runtime": {
+    "cleanup_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "nellie_python": "<CONFIGURE_EXTERNAL_PATH>"
+  }
+}

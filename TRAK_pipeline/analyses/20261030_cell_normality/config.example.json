@@ -1,0 +1,20 @@
+{
+  "method": "Shapiro-Wilk and normal Q-Q plots; raw-scale exploratory diagnostics",
+  "group_by": [
+    "protein",
+    "condition"
+  ],
+  "observations": "one saved value per cell; pooled across three BRs",
+  "source": "_TRAK_pipeline/analyses/20261030_protein_metrics/data/cells.csv",
+  "metrics": [
+    "on_percentage",
+    "mean_ROI_area_um2",
+    "first_mask_ROI_area_um2"
+  ],
+  "alpha_reference": 0.05,
+  "multiplicity": "Unadjusted diagnostic p values; not confirmatory group tests",
+  "transformations": "none",
+  "outlier_removal": "none",
+  "upstream_scientific_steps_executed": 0,
+  "normality_based_test_selection": false
+}

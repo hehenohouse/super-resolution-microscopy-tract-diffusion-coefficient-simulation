@@ -1,0 +1,17 @@
+{
+  "source_frame_count": 2500,
+  "shape_yx": [
+    684,
+    428
+  ],
+  "pixel_size_nm": 117,
+  "frame_interval_s": 0.02,
+  "support_total_frames": 50,
+  "support_minimum_count": 10,
+  "minimum_foreground_area_pixel2": 32,
+  "hole_area_exclusive_max_pixel2": 64,
+  "per_frame_min32": false,
+  "native_worker_sha256": "c71248f9ed35e95f2aaadfec62688132ece6e9de63c6eda101f0521205704bcb",
+  "registration_status": "exploratory_identity_registration_unverified",
+  "selected_as_final": false
+}

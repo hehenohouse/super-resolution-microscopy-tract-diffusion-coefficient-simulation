@@ -1,0 +1,149 @@
+{
+  "sample_id": "MDK_TRAK1_BR1_T1",
+  "sample_name": "MDK TRAK1 BR1 cell T1",
+  "run_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "cell_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_output": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_C1": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_ROI": "<CONFIGURE_EXTERNAL_PATH>",
+  "block_starts": [
+    0,
+    1200,
+    2450
+  ],
+  "sample_frames": [
+    0,
+    24,
+    49,
+    1200,
+    1224,
+    1249,
+    2450,
+    2474,
+    2498,
+    2499
+  ],
+  "shape_TYX": [
+    2500,
+    684,
+    428
+  ],
+  "pixel_size_nm": 117.0,
+  "frame_interval_s": 0.02,
+  "crop_xyxy_px": [
+    47,
+    249,
+    418,
+    596
+  ],
+  "display_original_C1_ADU": [
+    407,
+    651
+  ],
+  "display_scale": 2,
+  "native_chunk_frames": 25,
+  "support_frames": 50,
+  "support_minimum": 10,
+  "foreground_min_pixels": 32,
+  "hole_exclusive_max_pixels": 64,
+  "recipe": "native_broad_support50_ge10_postmin32_FG8_holes_lt64_BG4",
+  "registration_status": "identity / independently unverified",
+  "runtime": {
+    "cleanup_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "nellie_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "science_python": "<CONFIGURE_EXTERNAL_PATH>"
+  },
+  "input_policy": "original raw C1 uint16; no contrast stretch, clipping, denoising or spatial changes",
+  "baseline_original_output": "<CONFIGURE_EXTERNAL_PATH>",
+  "method_version": "nellie_explicit_additive_scales_v1",
+  "method_note": "Preserve exact baseline sigmas and append larger sigmas; all other inherited Nellie Filter/Label and support cleanup rules unchanged.",
+  "baseline_sigmas_pixels": [
+    1.0683760683760684,
+    1.4245014245014245,
+    1.7806267806267806,
+    2.1367521367521367,
+    2.4928774928774926
+  ],
+  "methods": [
+    {
+      "id": "A_default",
+      "label": "Default scales",
+      "reused": true,
+      "nominal_max_radius_um": 1.0,
+      "sigmas_pixels": [
+        1.0683760683760684,
+        1.4245014245014245,
+        1.7806267806267806,
+        2.1367521367521367,
+        2.4928774928774926
+      ]
+    },
+    {
+      "id": "B_add_to_1p5um",
+      "label": "Default + larger scales (1.5 um)",
+      "reused": false,
+      "nominal_max_radius_um": 1.5,
+      "sigmas_pixels": [
+        1.0683760683760684,
+        1.4245014245014245,
+        1.7806267806267806,
+        2.1367521367521367,
+        2.4928774928774926,
+        2.849002849002849,
+        3.205128205128205,
+        3.5612535612535607,
+        3.917378917378917,
+        4.273504273504273
+      ]
+    },
+    {
+      "id": "C_add_to_2p0um",
+      "label": "Default + larger scales (2.0 um)",
+      "reused": false,
+      "nominal_max_radius_um": 2.0,
+      "sigmas_pixels": [
+        1.0683760683760684,
+        1.4245014245014245,
+        1.7806267806267806,
+        2.1367521367521367,
+        2.4928774928774926,
+        2.849002849002849,
+        3.205128205128205,
+        3.5612535612535607,
+        3.917378917378917,
+        4.273504273504273,
+        4.62962962962963,
+        4.985754985754985,
+        5.3418803418803416,
+        5.698005698005698
+      ]
+    }
+  ],
+  "native_parameters": {
+    "base_filter_min_radius_um": 0.25,
+    "base_filter_max_radius_um": 1.0,
+    "alpha_sq": 0.5,
+    "beta_sq": 0.5,
+    "remove_edges": false,
+    "low_memory": false,
+    "device": "cpu",
+    "Label_min_radius_um": 0.117,
+    "Label_otsu_thresh_intensity": false,
+    "native_min_area_pixel2": 4
+  },
+  "diagnostics": {
+    "sample_frames": [
+      0,
+      24,
+      49,
+      1200,
+      1224,
+      1249,
+      2450,
+      2474,
+      2498,
+      2499
+    ],
+    "bright_region": "Original full-frame P99 estimated by the previous test, then restricted to unchanged ROI; identical per-frame region for all methods; not ground-truth accuracy."
+  }
+}

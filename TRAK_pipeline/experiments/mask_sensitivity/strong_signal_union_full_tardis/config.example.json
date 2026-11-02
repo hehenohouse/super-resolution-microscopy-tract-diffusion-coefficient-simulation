@@ -1,0 +1,232 @@
+{
+  "sample_id": "MDK_TRAK1_BR1_T1",
+  "sample_name": "MDK TRAK1 BR1 cell T1",
+  "cell_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_output": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_C1": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_ROI": "<CONFIGURE_EXTERNAL_PATH>",
+  "block_starts": [
+    0,
+    50,
+    100,
+    150,
+    200,
+    250,
+    300,
+    350,
+    400,
+    450,
+    500,
+    550,
+    600,
+    650,
+    700,
+    750,
+    800,
+    850,
+    900,
+    950,
+    1000,
+    1050,
+    1100,
+    1150,
+    1200,
+    1250,
+    1300,
+    1350,
+    1400,
+    1450,
+    1500,
+    1550,
+    1600,
+    1650,
+    1700,
+    1750,
+    1800,
+    1850,
+    1900,
+    1950,
+    2000,
+    2050,
+    2100,
+    2150,
+    2200,
+    2250,
+    2300,
+    2350,
+    2400,
+    2450
+  ],
+  "sample_frames": [
+    0,
+    49,
+    200,
+    625,
+    1200,
+    1250,
+    1875,
+    2000,
+    2450,
+    2499
+  ],
+  "shape_TYX": [
+    2500,
+    684,
+    428
+  ],
+  "pixel_size_nm": 117.0,
+  "frame_interval_s": 0.02,
+  "crop_xyxy_px": [
+    47,
+    249,
+    418,
+    596
+  ],
+  "display_original_C1_ADU": [
+    407,
+    651
+  ],
+  "display_scale": 2,
+  "support_frames": 50,
+  "support_minimum": 10,
+  "foreground_min_pixels": 32,
+  "hole_exclusive_max_pixels": 64,
+  "recipe": "native_broad_support50_ge10_postmin32_FG8_holes_lt64_BG4",
+  "registration_status": "identity / independently unverified",
+  "runtime": {
+    "cleanup_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "nellie_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "science_python": "<CONFIGURE_EXTERNAL_PATH>"
+  },
+  "baseline_sigmas_pixels": [
+    1.0683760683760684,
+    1.4245014245014245,
+    1.7806267806267806,
+    2.1367521367521367,
+    2.4928774928774926
+  ],
+  "native_parameters": {
+    "base_filter_min_radius_um": 0.25,
+    "base_filter_max_radius_um": 1.0,
+    "alpha_sq": 0.5,
+    "beta_sq": 0.5,
+    "remove_edges": false,
+    "low_memory": false,
+    "device": "cpu",
+    "Label_min_radius_um": 0.117,
+    "Label_otsu_thresh_intensity": false,
+    "native_min_area_pixel2": 4
+  },
+  "run_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "method_version": "nellie_raw_strong_union_mad6_v1",
+  "input_policy": "Original raw C1, no intensity rewriting or spatial resampling; preserve baseline full-field Nellie broad.",
+  "strong_signal_rule": {
+    "reference_pixels": "All finite positive original pixels in full frame; independent of ROI, Nellie labels and C2.",
+    "location": "median",
+    "scale": "median(abs(I-median(I))) / 0.6744897501960817",
+    "k": 6.0,
+    "comparison": "raw_C1 > median + k*scale",
+    "minimum_valid_pixels": 1024,
+    "undefined_policy": "Stop this isolated test and report frame if insufficient valid pixels or scale<=0; no silent threshold substitution.",
+    "interpretation": "A conservative robust intensity margin; not pure background/camera noise, no6sigma confidence/false-positive claim.",
+    "component_anchor": false,
+    "dilation": false,
+    "blanket_hole_fill": false
+  },
+  "methods": [
+    {
+      "id": "A_default",
+      "label": "Original default Nellie",
+      "reused": true
+    },
+    {
+      "id": "B_strong_union",
+      "label": "Default Nellie + raw strong signal",
+      "reused": false
+    }
+  ],
+  "union_stage": "Per original frame, default broad OR strong raw-C1 pixels, before50-frame support counting.",
+  "diagnostics": {
+    "bright_region": "Original block-first C1 > saved original full-frame P99 then restricted to unchanged ROI; same region for all methods; diagnostic not accuracy.",
+    "detail_display": "Shared non-saturating high-intensity display for three block-first frames; display only, not segmentation input."
+  },
+  "run_id": "20261030T202859Z",
+  "source_release": "<CONFIGURE_EXTERNAL_PATH>",
+  "pipeline_package": "<CONFIGURE_EXTERNAL_PATH>",
+  "frames": 2500,
+  "scope": "This cell only, complete 2500 frames. Reclassify using original1SE ellipse, recompute TARDIS and paired time-block bootstrap. Preserve originals.",
+  "tardis": {
+    "frames": 2500,
+    "segment_frames": 250,
+    "pixel_size_nm": 117.0,
+    "frame_interval_s": 0.02,
+    "tau_frames": 1,
+    "distance_max_um": 3.0,
+    "distance_bins": 300,
+    "background_fit_um": [
+      2.1,
+      3.0
+    ],
+    "minimum_background_tail_ordered_pairs": 100,
+    "minimum_total_tail_pairs": 100,
+    "signed_area_min_abs": 0.01,
+    "main_area_min_positive": 0.01,
+    "main_region_um": [
+      0.0,
+      0.1
+    ],
+    "tail_region_um": [
+      0.1,
+      0.25
+    ],
+    "minimum_joint_valid_fraction": 0.95,
+    "group_rule": "Frozen postmin32_pointwise_label; k1 own position-SE ellipse contact; no probability filter or weighting",
+    "total_rule": "Both endpoints in same group, true original adjacent frames, keep exact zero cross-frame distances",
+    "background_rule": "Ordered same-frame pairs within group, remove ALL exact zero distances including self and coincident points",
+    "normalization_rule": "Independently normalize pooled Total and B raw counts to unit mass on 0-3 um; no frame-wise normalization or frame equal-weighting",
+    "beta_rule": "Tail least squares dot(T,B)/dot(B,B), clipped [0,1]; save raw beta",
+    "shape_rule": "Signed Intra divided by signed area on all 300 bins; retain negative bins; abs(area)<=0.01 unavailable",
+    "background_compatibility_rule": "Descriptive normalized tail L1/cosine and tail-bin residuals; does not validate dynamic-mask background exchangeability",
+    "bootstrap": {
+      "replicates": 1000,
+      "seed": 20261007,
+      "block_lengths_frames": [
+        10,
+        25,
+        50
+      ],
+      "primary_block_frames": 25,
+      "strata_frames": 250,
+      "method": "Reuse identical saved paired nonoverlapping-block weights within each 250-frame stratum",
+      "boundary_rule": "Sum only source-block-internal true adjacent pairs; never create adjacency at block joins",
+      "interval_interpretation": "Exploratory pointwise 2.5-97.5 percentile ranges; temporal bootstrap coverage not calibrated; no p values or simultaneous-significance claims; conditional on fixed masks and labels; does not propagate segmentation/registration uncertainty"
+    },
+    "registration_status": "exploratory_identity_registration_unverified",
+    "calibration_status": "manufacturer_nominal",
+    "checkpoint_frames": 250,
+    "refitting": false,
+    "resegmenting": false,
+    "tracking": false,
+    "probability_filtering": false,
+    "uncertainty_deconvolution": false,
+    "diffusion_correction": false,
+    "biological_state_fitting": false,
+    "formal_inference": false,
+    "classification_label_field": "postmin32_pointwise_label",
+    "mask_label": "support50>=10 / post-min32",
+    "mask_diagnostic_candidates": [
+      [
+        "support50_postmin32",
+        "#246B9E",
+        "Adjacent 1s support blocks"
+      ]
+    ],
+    "mask_diagnostics_block_boundaries_only": true,
+    "mask_agreement_title": "ROI IoU between consecutive 1s support blocks",
+    "mask_diagnostic_footer": "Masks are fixed within50frames. Block-boundary IoU is descriptive; background exchangeability is unvalidated.",
+    "shared_weights_sha256": "ec2bc8d084c21a1ad95e053309c63642ca634bc2ae630d48f469aceb04e90c9f",
+    "sample_name": "MDK TRAK1 BR1 cell T1",
+    "sample_id": "MDK_TRAK1_BR1_T1",
+    "shared_weights": "<CONFIGURE_EXTERNAL_PATH>"
+  }
+}

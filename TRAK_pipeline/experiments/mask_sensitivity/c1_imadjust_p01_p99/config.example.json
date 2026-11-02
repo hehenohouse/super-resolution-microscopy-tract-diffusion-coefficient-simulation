@@ -1,0 +1,64 @@
+{
+  "sample_id": "MDK_TRAK1_BR1_T1",
+  "sample_name": "MDK TRAK1 BR1 cell T1",
+  "run_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "cell_directory": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_output": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_C1": "<CONFIGURE_EXTERNAL_PATH>",
+  "source_ROI": "<CONFIGURE_EXTERNAL_PATH>",
+  "block_starts": [
+    0,
+    1200,
+    2450
+  ],
+  "sample_frames": [
+    0,
+    24,
+    49,
+    1200,
+    1224,
+    1249,
+    2450,
+    2474,
+    2498,
+    2499
+  ],
+  "shape_TYX": [
+    2500,
+    684,
+    428
+  ],
+  "pixel_size_nm": 117.0,
+  "frame_interval_s": 0.02,
+  "crop_xyxy_px": [
+    47,
+    249,
+    418,
+    596
+  ],
+  "preprocessing": {
+    "method": "mat2gray_stretchlim_0.01_imadjust_gamma1",
+    "scope": "per-original-frame, full image including zeros; not ROI-only",
+    "low_fraction": 0.01,
+    "high_fraction": 0.99,
+    "output_dtype": "uint16",
+    "validity": "Original C1 zero regions retained separately; transformed zeros are not unknown"
+  },
+  "display_original_C1_ADU": [
+    407,
+    651
+  ],
+  "display_scale": 2,
+  "native_chunk_frames": 25,
+  "support_frames": 50,
+  "support_minimum": 10,
+  "foreground_min_pixels": 32,
+  "hole_exclusive_max_pixels": 64,
+  "recipe": "native_broad_support50_ge10_postmin32_FG8_holes_lt64_BG4",
+  "registration_status": "identity / independently unverified",
+  "runtime": {
+    "cleanup_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "nellie_python": "<CONFIGURE_EXTERNAL_PATH>",
+    "science_python": "<CONFIGURE_EXTERNAL_PATH>"
+  }
+}

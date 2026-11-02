@@ -16,3 +16,6 @@ TARDIS/analysis_output/
 TARDIS/group_analysis_output/
 TARDIS/results/
 TARDIS/reanalysis.log
+
+# macOS resource forks
+._*

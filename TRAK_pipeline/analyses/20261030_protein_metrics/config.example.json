@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "run_id": "20261030_protein_metrics",
+  "run_dir": "<CONFIGURE_EXTERNAL_PATH>",
+  "figures_dir": "<CONFIGURE_EXTERNAL_PATH>",
+  "conditions": [
+    "WT",
+    "TDK",
+    "MDK"
+  ],
+  "proteins": [
+    "TRAK1",
+    "TRAK2"
+  ],
+  "sources": {
+    "TRAK1": "<CONFIGURE_EXTERNAL_PATH>",
+    "TRAK2": "<CONFIGURE_EXTERNAL_PATH>"
+  },
+  "pairing": "unconfirmed_treated_as_independent_BR",
+  "statistical_unit": "BR_mean_of_equal_cell_values",
+  "endpoints": [
+    "on_percentage",
+    "mean_ROI_area_um2",
+    "first_mask_ROI_area_um2"
+  ],
+  "tests": {
+    "method": "exact_independent_permutation_difference_in_BR_means",
+    "alternative": "two-sided",
+    "family": "27 planned pairwise comparisons: 3 endpoints x (3 proteins-within-condition + 6 conditions-within-protein)",
+    "multiplicity": "Holm_FWER_across_27",
+    "alpha": 0.05
+  },
+  "cell_weighting": "equal_within_BR",
+  "condition_weighting": "equal_BR",
+  "unknown": "excluded_from_On_ratio_denominator; retained in count columns"
+}
