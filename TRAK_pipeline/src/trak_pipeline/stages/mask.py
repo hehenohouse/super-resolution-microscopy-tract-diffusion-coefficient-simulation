@@ -5,6 +5,7 @@ frame IDs are explicit and an incomplete temporal window remains unavailable.
 """
 from __future__ import annotations
 import csv
+import hashlib
 import importlib.util
 import json
 import math
@@ -13,7 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import uuid
+import tempfile
 
 
 def _result(files, metadata):
@@ -21,9 +22,16 @@ def _result(files, metadata):
     return StageResult(files, metadata)
 
 
+def _temporary_path(destination):
+    """Reserve a short, unique sibling for atomic writes on Windows too."""
+    descriptor,name=tempfile.mkstemp(prefix='.',suffix='.tmp',dir=Path(destination).parent)
+    os.close(descriptor)
+    return Path(name)
+
+
 def _json(path, value):
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    tmp = _temporary_path(path)
     try:
         tmp.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n', encoding='utf-8')
         os.replace(tmp, path)
@@ -34,7 +42,7 @@ def _json(path, value):
 def _array(path, value):
     import numpy as np
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    tmp = _temporary_path(path)
     try:
         with tmp.open('wb') as stream: np.save(stream, value, allow_pickle=False)
         os.replace(tmp, path)
@@ -139,7 +147,7 @@ def save_packed(path, masks, frame_ids):
     path=Path(path); frames=np.asarray(frame_ids, dtype=np.int32)
     if frames.shape!=(len(masks),) or len(set(frames.tolist()))!=len(frames): raise ValueError('Invalid broad frame IDs')
     path.parent.mkdir(parents=True,exist_ok=True)
-    tmp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    tmp=_temporary_path(path)
     try:
         with tmp.open('wb') as stream:
             np.savez_compressed(stream,packed=pack_broad(masks),shape=np.asarray(masks.shape,dtype=np.int32),
@@ -185,6 +193,52 @@ def _iter_broad_masks(artifact, chunk_frames):
         for record in _broad_records(artifact):yield load_packed(record['path'])
 
 
+def _native_work_layout(common_root, dataset_name, artifact_id, sample_id, start):
+    """Short transient layout; scientific identity/committed paths do not change.
+
+    Accept a PureWindowsPath in tests without touching the host filesystem.
+    A marker validates the full (untruncated) identity before any cleanup.
+    """
+    identity = dict(dataset=str(dataset_name),artifact_id=str(artifact_id),sample_id=str(sample_id))
+    key = hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':')).encode('utf-8')).hexdigest()[:24]
+    parent = common_root / 'native_work' / 'n' / key
+    return parent / ('c%06d' % int(start)), identity
+
+
+def _prepare_native_work(ctx, start):
+    """Own short same-drive scratch, isolated across cells/artifacts/chunks."""
+    package = Path(ctx.package_root).resolve()
+    fallback = package.parents[1] if package.parent.name == 'releases' else package
+    common = Path(os.environ.get('TRAK_COMMON_ROOT',str(fallback))).resolve()
+    volume = Path(ctx.config['data_root']).resolve().parent
+    if not common.is_relative_to(volume) or common == volume:
+        raise ValueError('Nellie transient workspace must remain on the data drive')
+    work, identity = _native_work_layout(common,Path(ctx.config['data_root']).name,
+        Path(ctx.output_dir).name,ctx.sample_id,start)
+    if not work.resolve().is_relative_to(common):
+        raise ValueError('Nellie transient workspace resolves outside the shared data-drive package')
+    root = work.parent
+    marker = root / 'owner.json'
+    if root.is_symlink() or work.is_symlink():
+        raise ValueError('Nellie transient workspace cannot be a symlink')
+    if marker.is_file():
+        if _read(marker) != identity:
+            raise ValueError('Nellie transient workspace identity conflict; nothing was removed')
+    elif root.exists() and any(root.iterdir()):
+        raise ValueError('Unowned Nellie transient workspace; nothing was removed')
+    root.mkdir(parents=True,exist_ok=True)
+    _json(marker,identity)
+    if work.exists():shutil.rmtree(work)
+    work.mkdir()
+    return work
+
+
+def _native_log_tail(path, lines=24):
+    with Path(path).open('r',encoding='utf-8',errors='replace') as stream:
+        from collections import deque
+        return ''.join(deque(stream,maxlen=lines))
+
+
 def _native_worker(request_path):
     """Exact frozen Nellie call sequence, with explicit grid, units and radii."""
     import importlib.metadata
@@ -221,6 +275,19 @@ def _native_worker(request_path):
         filter_radii_um=request['filter_radii_um'],pixel_size_nm=request['pixel_size_nm'],frame_interval_s=request['frame_interval_s']))
 
 
+
+NELLIE_CHUNK_WORKERS_DEFAULT=1
+
+
+def _nellie_chunk_workers(config,environ=None):
+    """Execution-only count of concurrent native Nellie chunk processes; never scientific identity."""
+    environ=os.environ if environ is None else environ
+    value=environ.get('TRAK_NELLIE_WORKERS') or config.get('execution',{}).get('nellie_chunk_workers',NELLIE_CHUNK_WORKERS_DEFAULT)
+    value=int(value)
+    if value<1:raise ValueError('nellie_chunk_workers must be a positive integer')
+    return value
+
+
 def execute_broad(ctx):
     import numpy as np
     import tifffile
@@ -234,7 +301,6 @@ def execute_broad(ctx):
     if not executable: raise ValueError('Explicit existing Nellie Python executable is required')
     out=ctx.output_dir; out.mkdir(parents=True,exist_ok=True)
     packed=out/'broad_packed';packed.mkdir(exist_ok=True)
-    scratch=out/'native_work';scratch.mkdir(exist_ok=True)
     records=[];available=[]; sampled=[]
     sample_frames=set(ctx.config.get('sample_frames',ctx.config.get('checking',{}).get('frames',[])))
     declared=c1.metadata.get('original_frame_ids',frames)
@@ -243,37 +309,53 @@ def execute_broad(ctx):
         if len(movie.pages)!=len(declared): raise ValueError('C1 page count and declared original frames differ')
         page_for={int(f):i for i,f in enumerate(declared)}
         available=[f for f in frames if f in page_for]
-        for start in range(0,len(available),chunk):
-            ids=available[start:start+chunk];tag='chunk_%06d'%start; dest=packed/(tag+'.npz'); complete=packed/(tag+'.json')
-            if dest.exists() and complete.exists():
-                record=_read(complete)
-                if record.get('frame_ids')!=ids or record.get('parameters')!=p: raise ValueError('Native chunk checkpoint belongs to different input/parameters')
-                # Sampled pages only are independently read back; presence/shape are lightweight checks.
-                if sample_frames.intersection(ids):
-                    saved,saved_ids=load_packed(dest)
-                    if saved_ids!=ids or saved.shape!=(len(ids),*shape):raise ValueError('Native checkpoint mapping/shape mismatch')
-                records.append(dict(path=str(dest.relative_to(out)),frame_ids=ids));continue
-            work=scratch/tag
-            if work.exists(): shutil.rmtree(work)
-            work.mkdir()
-            raw=np.stack([movie.pages[page_for[f]].asarray() for f in ids])
-            if raw.shape!=(len(ids),*shape) or raw.dtype!=np.uint16: raise ValueError('Original C1 grid/type mismatch')
-            input_tif=work/'input.ome.tif'
-            tifffile.imwrite(input_tif,raw,ome=True,metadata=dict(axes='TYX',PhysicalSizeX=scale/1000,PhysicalSizeY=scale/1000,
-                PhysicalSizeXUnit='µm',PhysicalSizeYUnit='µm',TimeIncrement=dt,TimeIncrementUnit='s'))
-            if sample_frames.intersection(ids):
-                with tifffile.TiffFile(input_tif) as own:
-                    for i,f in enumerate(ids):
-                        if f in sample_frames:
-                            np.testing.assert_array_equal(own.pages[i].asarray(),raw[i]);sampled.append(f)
-            request=dict(work=str(work),input=str(input_tif),output=str(work/'broad_mask.npy'),frame_ids=ids,
-                shape_yx=list(shape),pixel_size_nm=scale,frame_interval_s=dt,filter_radii_um=radii,nellie_version=p['nellie_version'])
-            req=work/'request.json';_json(req,request)
-            with (out/(tag+'_nellie.log')).open('w',encoding='utf-8') as stream:
-                subprocess.run([str(executable),'-B','-u',str(Path(__file__).resolve()),'--native-worker',str(req)],
-                    cwd=work,env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'),stdout=stream,stderr=subprocess.STDOUT,check=True)
+        # Chunks are independent native Nellie processes (own input, scratch and output).
+        # Up to `workers` run concurrently; results are committed strictly in chunk order.
+        workers=_nellie_chunk_workers(ctx.config)
+        ctx.progress('Nellie broad scheduler',chunk_workers=workers)
+        import collections,concurrent.futures,threading
+        pending=collections.deque()
+        running={};running_lock=threading.Lock();stopping=threading.Event()
+        def run_native(native_log,req,work):
+            command=[str(executable),'-B','-u',str(Path(__file__).resolve()),'--native-worker',str(req)]
+            with native_log.open('w',encoding='utf-8') as stream:
+                with running_lock:
+                    if stopping.is_set():raise RuntimeError('Nellie broad stage is stopping; chunk not started')
+                    process=subprocess.Popen(command,cwd=work,env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'),stdout=stream,stderr=subprocess.STDOUT)
+                    running[id(process)]=process
+                try:code=process.wait()
+                finally:
+                    with running_lock:running.pop(id(process),None)
+            if code:raise subprocess.CalledProcessError(code,command)
+        def stop_native(grace_s=8):
+            # Stop running chunks now so their scratch and the drive are released at once.
+            # A stopped chunk has no completion marker and is recomputed on resume.
+            with running_lock:
+                stopping.set();processes=list(running.values())
+            for process in processes:
+                try:
+                    if process.poll() is None:process.terminate()
+                except OSError:pass
+            for process in processes:
+                try:process.wait(timeout=grace_s)
+                except subprocess.TimeoutExpired:
+                    try:process.kill();process.wait(timeout=grace_s)
+                    except OSError:pass
+        def finish(entry):
+            start,ids=entry['start'],entry['ids']
+            if entry['cached']:
+                records.append(dict(path=str(entry['dest'].relative_to(out)),frame_ids=ids));return
+            tag,dest,complete,work,native_log=entry['tag'],entry['dest'],entry['complete'],entry['work'],entry['native_log']
+            try:
+                entry['future'].result()
+            except subprocess.CalledProcessError:
+                # Preserve the native exit code (including shared-environment
+                # failure74), keep owned scratch, and surface the actual cause.
+                print('Nellie worker failed. Native log: '+str(native_log)+'; workspace: '+str(work),file=sys.stderr,flush=True)
+                print(_native_log_tail(native_log),file=sys.stderr,flush=True)
+                raise
             masks=np.load(work/'broad_mask.npy',allow_pickle=False)
-            if masks.shape!=raw.shape or masks.dtype!=bool:raise ValueError('Native broad result differs from original grid')
+            if masks.shape!=entry['raw_shape'] or masks.dtype!=bool:raise ValueError('Native broad result differs from original grid')
             save_packed(dest,masks,ids)
             for name in ('thresholds.json','actual_parameters.json'):shutil.copy2(work/name,packed/(tag+'_'+name))
             if sample_frames.intersection(ids):
@@ -282,10 +364,49 @@ def execute_broad(ctx):
                     if f in sample_frames:np.testing.assert_array_equal(saved[i],masks[i])
             _json(complete,dict(frame_ids=ids,parameters=p,shape=list(masks.shape),complete=True))
             records.append(dict(path=str(dest.relative_to(out)),frame_ids=ids))
-            del masks,raw;shutil.rmtree(work)
+            del masks;shutil.rmtree(work)
             if (start+len(ids))%250==0 or start+len(ids)==len(available):
                 _json(out/'checkpoint.json',dict(completed_frames=start+len(ids),expected_frames=len(frames),available_frames=len(available)))
                 ctx.progress('Nellie broad checkpoint',completed_frames=start+len(ids),expected_frames=len(frames))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+          try:
+            for start in range(0,len(available),chunk):
+                ids=available[start:start+chunk];tag='chunk_%06d'%start; dest=packed/(tag+'.npz'); complete=packed/(tag+'.json')
+                if dest.exists() and complete.exists():
+                    record=_read(complete)
+                    if record.get('frame_ids')!=ids or record.get('parameters')!=p: raise ValueError('Native chunk checkpoint belongs to different input/parameters')
+                    # Sampled pages only are independently read back; presence/shape are lightweight checks.
+                    if sample_frames.intersection(ids):
+                        saved,saved_ids=load_packed(dest)
+                        if saved_ids!=ids or saved.shape!=(len(ids),*shape):raise ValueError('Native checkpoint mapping/shape mismatch')
+                    pending.append(dict(start=start,ids=ids,dest=dest,cached=True))
+                else:
+                    work=_prepare_native_work(ctx,start)
+                    raw=np.stack([movie.pages[page_for[f]].asarray() for f in ids])
+                    if raw.shape!=(len(ids),*shape) or raw.dtype!=np.uint16: raise ValueError('Original C1 grid/type mismatch')
+                    input_tif=work/'input.ome.tif'
+                    tifffile.imwrite(input_tif,raw,ome=True,metadata=dict(axes='TYX',PhysicalSizeX=scale/1000,PhysicalSizeY=scale/1000,
+                        PhysicalSizeXUnit='µm',PhysicalSizeYUnit='µm',TimeIncrement=dt,TimeIncrementUnit='s'))
+                    if sample_frames.intersection(ids):
+                        with tifffile.TiffFile(input_tif) as own:
+                            for i,f in enumerate(ids):
+                                if f in sample_frames:
+                                    np.testing.assert_array_equal(own.pages[i].asarray(),raw[i]);sampled.append(f)
+                    request=dict(work=str(work),input=str(input_tif),output=str(work/'broad_mask.npy'),frame_ids=ids,
+                        shape_yx=list(shape),pixel_size_nm=scale,frame_interval_s=dt,filter_radii_um=radii,nellie_version=p['nellie_version'])
+                    req=work/'request.json';_json(req,request)
+                    native_log=out/(tag+'_nellie.log')
+                    pending.append(dict(start=start,ids=ids,tag=tag,dest=dest,complete=complete,work=work,native_log=native_log,
+                        raw_shape=raw.shape,cached=False,future=pool.submit(run_native,native_log,req,work)))
+                    del raw
+                while sum(1 for e in pending if not e['cached'])>=workers or (pending and pending[0]['cached']):
+                    finish(pending.popleft())
+            while pending:finish(pending.popleft())
+          except BaseException:
+            for entry in pending:
+                if not entry['cached']:entry['future'].cancel()
+            stop_native()
+            raise
     index=out/'broad_index.json';_json(index,dict(chunks=records,original_frame_ids=frames,available_frame_ids=available,
         shape_yx=list(shape),pixel_size_nm=scale,frame_interval_s=dt,axes='TYX',roi_independent=True,
         native_post_min32=False,sampled_original_frames=sorted(set(sampled)),sampled_check_only=True))

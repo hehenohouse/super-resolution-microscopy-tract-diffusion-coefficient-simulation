@@ -389,10 +389,21 @@ def summarize_cells(inventory, cells, config=None):
             good, reasons = evaluate_curves(cell.get('curves', {}))
             cell['reasons'] = sorted(set(cell.get('reasons', []) + reasons))
             cell['eligible'] = bool(good and cell.get('eligible', True) and not cell['reasons'])
+    declared_replicas = config.get('replicas')
+    if declared_replicas is not None:
+        if (not isinstance(declared_replicas, list) or not declared_replicas or
+                any(not isinstance(br, str) or not re.fullmatch(r'BR[1-9][0-9]*', br) for br in declared_replicas) or
+                len(set(declared_replicas)) != len(declared_replicas)):
+            raise SummarySourceError('Declared replicas must be unique explicit BR labels')
     br_nodes, condition_nodes = [], []
     for condition in CONDITIONS:
         crows = [r for r in inventory if r['genotype'] == condition]
-        for BR in sorted({r['BR'] for r in crows}, key=_natural):
+        present = {r['BR'] for r in crows}
+        if declared_replicas is not None and crows and present != set(declared_replicas):
+            raise SummarySourceError('Expected inventory replica roster differs for ' + condition +
+                                     ': declared=' + str(declared_replicas) + '; observed=' + str(sorted(present, key=_natural)))
+        replica_order = declared_replicas if declared_replicas is not None else sorted(present, key=_natural)
+        for BR in (br for br in replica_order if br in present):
             rows = [r for r in crows if r['BR'] == BR]
             first_dir = Path(rows[0]['source_directory_relative'])
             node = _node('BR', condition + '/' + BR, root / first_dir.parent, rows, cells, condition, BR)

@@ -4,6 +4,98 @@ One shared, frozen implementation serves TRAK1, TRAK2, Mac and Windows. Dataset 
 
 This package does not start a batch when installed. It uses the four existing Python environments and the existing Fiji/Java installation; it installs no dependencies and performs no Mac/Windows numerical or pixel replay.
 
+## Speed settings — 2026-11-06
+
+The pending Windows batch is pinned to `releases/20261106T_pending_and_Halo_controls_v5_roicheck`. It builds on `..._v2_fastfit` (faster fit and detection), `..._v3_nellie` (concurrent Nellie) and `..._v4_cleanexit` (running fit workers and Nellie chunks stop promptly when a stage fails). v5 also fixes an assignment self-check that used the pixel ROI instead of the fit's ROI polygon and stopped `WT_TRAK1_BR5_T5`; see `CHANGELOG.md`. These releases only change how work is scheduled and stopped. Every scientific method, parameter and cache identity is unchanged, so completed cells and committed checkpoints are reused.
+
+Before this change, a Windows cell took about 61 minutes. Fit took about 43 of them, with 4 workers and a per-frame wait. Single-process Nellie (about 23 minutes) was hidden behind fit, and TrackMate used 2 threads with a JVM restart every 250 frames. The expected time is now about 20 minutes per cell. That figure is estimated, not yet measured on Windows.
+
+| Setting (`execution` in the batch configs) | Value | Effect | Override |
+| --- | --- | --- | --- |
+| `fit_workers` | `"auto"` = logical CPUs − 2, at most 10 | Each frame is fitted by one worker, two 25-frame chunks are queued ahead, and fit no longer waits for Nellie | `TRAK_FIT_WORKERS` |
+| `detection_threads` | `"auto"` = logical CPUs − 2, at most 12 | TrackMate threads; still one thread per frame | `TRAK_DETECTION_THREADS` |
+| `nellie_chunk_workers` | `3` | Independent 25-frame native Nellie chunks run concurrently | `TRAK_NELLIE_WORKERS` |
+| TrackMate JVM (code constant) | 625 frames / 6 GiB heap | 3 JVM restarts per cell instead of 9 | — |
+
+Without these keys the code keeps the old behaviour: 4 fit workers, 2 TrackMate threads and 1 Nellie chunk at a time. To confirm the settings at run time, look for these log lines: `"fit_scheduler", "workers": 10`, `"Nellie broad scheduler", "chunk_workers": 3`, `TrackMate threads 12` and `maximum 625 frames`.
+
+If TrackMate ever runs out of Java heap, the batch stops as an infrastructure error and keeps its committed chunks. Setting `TRAK_DETECTION_THREADS=2` reduces native memory use.
+
+To roll back to `..._v1`, repin the three batch manifests and set `fit_workers` back to `4`; older code cannot read `"auto"`. To roll back between v2–v5, only the manifests need to change; before v5, `WT_TRAK1_BR5_T5` fails again in assignment.
+
+Verification was same-machine parity on Mac. Fit tables (decompressed) and Nellie masks, thresholds and indexes were byte-identical to the previous release, with serial and concurrent settings alike. See `CHANGELOG.md` for the details. Native Windows execution of these releases has not been verified yet.
+
+## Combined Windows entry and separate HaloTag-only batch — 2026-11-04
+
+Double-click **`START_ALL_PENDING_WINDOWS.cmd`** in My Book's root. This resumes the existing TRAK1/TRAK2 BR4/BR5 queue, then processes the independent HaloTag-only control queue. At preparation, three target-extension cells and one control pilot were complete; 153 target-extension and 19 control cells remain. Completed cells and committed stages are reused. No installation, new pilot or cross-system qualification is scheduled.
+
+HaloTag-only contains 20 WT cells across two BRs. Its figures, numerical results, On percentage, ROI mask areas, per-cell localization counts, Intra summaries and `Cell_Metrics.xlsx` stay in the negative-control dataset. They are **not merged with TRAK1 or TRAK2**. WT-only summaries use the declared roster and original `NegativeControl/WT/` folder; no TDK or MDK control groups are invented.
+
+Use **`STOP_AFTER_CURRENT_CELL_ALL_WINDOWS.cmd`** to stop the whole combined queue after the current cell, and **`RESUME_ALL_PENDING_WINDOWS.cmd`** to continue. Original batch launchers, paused state, historical results and global release selection remain available. The new batch is pinned to its own frozen release.
+
+See [Windows start, outputs and averaging guide](docs/WINDOWS_ALL_PENDING_AND_HALOTAG.md). This delivery prepares launchers and publishes progress summaries from the completed control pilot; it does not automatically start pending cells.
+
+## BR4/BR5 extension batch — Windows first (2026-11-02)
+
+The new batch prepares **156 new cells** and joins their results with **211
+existing completed cells** for five-replica summaries. No cell analysis is
+started during preparation. The batch uses its own manifest, frozen release,
+state and stop markers; the global `CURRENT_RELEASE.json` and original launchers
+remain in place.
+
+| Protein | Existing BR1–BR3 cells | New BR4/BR5 queue | Full five-BR summary |
+| --- | ---: | ---: | ---: |
+| TRAK1 | 105 | 81 | 186 |
+| TRAK2 | 106 | 75 | 181 |
+| Total | 211 | 156 | 367 |
+
+On the Windows computer, double-click **`START_NEW_REPLICAS_WINDOWS.cmd`** in
+My Book's root or in `_TRAK_pipeline/batches/20261102_BR4_BR5/`. It processes both
+proteins using the existing on-drive Windows environments, Fiji and Java. Run
+the same file again to continue from committed stages. No package installation,
+Mac/Windows parity replay or repeated 150-frame pilot is part of this batch.
+
+`STOP_AFTER_CURRENT_CELL_NEW_REPLICAS_WINDOWS.cmd` requests a clean stop after
+the current cell for the entire combined queue. Control-C interrupts the owned
+process tree and retains committed checkpoints. Original batch states and stop
+requests remain separate. Mac `_MAC.command` counterparts are retained.
+
+New raw files remain at `Xinran_TRAK1/TRAK1/<condition>/<replica>/<cell>` and
+`Xinran_FullsetTRAK2/TRAK2/<condition>/<replica>/<cell>`. The user-confirmed TRAK2
+MDK mapping is `20260820_MDK_trak2_prcs = BR4` and
+`20260910_MDK_TRAK2_prcs = BR5`. Parent replica folders define BR identity;
+original `WTbr1`/`WTbr02` filenames are retained. Cross-protein BR pairing remains
+unconfirmed and is not inferred from these names.
+
+Production science is unchanged: **raw C1 → per-frame Nellie broad → support
+>=10/50 → post-min32 → enclosed holes <64 → ROI**, with the original per-point
+**1-SE ellipse** assignment. The isolated static mask from a 2500-frame mean C1
+image is an experiment and is not used by this batch. Existing acquisition,
+TrackMate, fitting/QC, TARDIS and shared 1000-repeat time-bootstrap rules remain.
+
+Area-normalized Intra summaries use method v2: normalize each eligible cell's
+signed curve over the full 0–3 um range, average cells equally within BR, then
+average the corrected BR curves equally within condition. Neither mean is
+area-normalized again. Signed/peak conventions and common validity rosters are
+retained. On% is first calculated per cell as `100*On/(On+Not-on)`, then averaged
+equally within BR and equally across available BRs within condition. Unknown and
+QC-excluded points remain outside its denominator.
+
+Cell, BR, condition and top-level outputs retain per-cell localization counts,
+On%, first-block ROI-mask area (frames 0–49), the time-weighted ROI-mask mean
+across the complete movie, SD/SEM and participant counts. Reader workbooks retain
+both pooled-cell and equal-BR descriptive count means. Signed/area/peak Intra
+figures include full and zoom views plus On/Not-on overlays. PNGs, Excel files
+and indexes remain on My Book next to the corresponding cell/BR/condition.
+Incomplete or failed members remain explicit; missing data are not filled with
+zero. No additional formal significance tests or biological pairing are added.
+
+See [Windows instructions](batches/20261102_BR4_BR5/README_WINDOWS.txt) and the
+[batch index](batches/20261102_BR4_BR5/INDEX.html). Preparation validation is
+bounded metadata/inventory, logic and synthetic tests. It does not claim a
+native Windows scientific run. The manifest is enabled only after its pinned
+release has been frozen; this preparation does not start the queue.
+
 ## Documentation and source publication — 2026-11-02
 
 **GitHub scope: text source and documentation only.** Java.class, NPZ resources,
@@ -15,7 +107,7 @@ provide/rebuild runtime resources before freezing and installing a new copy.
 
 The current source archive includes the shared production pipeline, both-platform launcher examples, existing dependency definitions and opt-in experimental entry points. The detailed [change log](CHANGELOG.md) records both changes and retained behavior; [publication scope](docs/publication_scope.md) explains the code-only archive.
 
-The datasets contain 105 TRAK1 and 106 TRAK2 cells. The modular migration adopted their saved results. This documentation/publication update does not re-run those cells. Run, summarize and refresh remain separate operations.
+The original completed datasets contain 105 TRAK1 and 106 TRAK2 cells. The BR4/BR5 extension adds 81 TRAK1 and 75 TRAK2 cells; the combined inventory therefore contains 367 cells. The modular migration adopted the original saved results. This documentation/publication update does not re-run those cells. Run, summarize and refresh remain separate operations.
 
 | Production setting | Retained value |
 | --- | --- |
@@ -199,3 +291,23 @@ preparation is automatically performed by refresh.
 
 
 Completed on 2026-11-02: six focused regression tests passed; corrected saved-curve hierarchies were regenerated for all 105 TRAK1 and 106 TRAK2 cells (26 nodes, 312 PNGs). Prior cohorts and every signed/peak saved row were unchanged. Upstream cell-science calls, new cells and scalar/Excel rewrites were zero. V1 numeric result directories are retained.
+
+
+BR4/BR5 preparation checks completed on2026-11-02:37focused tests passed (7inventory,4legacy-source,14summary/normalization,12batch-control). Two real committed legacy-cell adapters read successfully under the isolated new configs. These were code/metadata checks only:0newcells and0scientific stages started. The new queue is pinned to its own frozen release20261102T_BR4_BR5_batch_v1; the prior global release pointer is retained.
+
+
+Windows Python3.11 startup hotfix (2026-11-02): the BR4/BR5 controller and standalone Intra updater now use os.path.ismount. This replaces unsupported Windows pathlib.Path.is_mount calls. Seventeen focused regressions passed, including simulated unsupported Path.is_mount, volume failure, queue startup, pause/resume and missing-output repair. The batch is pinned to20261102T_BR4_BR5_batch_v2_winmount; original v1/global release and all scientific settings/outputs are retained. No cell analysis was launched by the fix.
+
+
+BR4/BR5 I/O hotfix2026-11-02: pinned version20261102T_BR4_BR5_batch_v3_iofix uses short on-drive Nellie scratch and supports flat legacy/nested modern scalar metrics. Sixpath and21schema/five-BR tests passed; all211oldcell adapters loaded, and one isolated25-frame native I/O probe succeeded. Committed caches, scientific parameters and cell-first area means remain unchanged. No full batch or cross-system pixel qualification was run.
+
+
+2026-11-04 detector-memory repair: pinned version20261104T_BR4_BR5_batch_v4_winrun restores maximum250frames per JVM, explicit image flush/GC, checkpoint-preserving resume and heap-exhaustion infrastructure stop. Detector settings and scientific IDs stay unchanged. Seven targeted tests and real625-frame checkpoint reads passed. A native Mac probe could not start detection because existing dependency files were incomplete; no native scientific validation is claimed. Preserve3900detection and4494Nellie chunks; use the same START file to retry failed rows. (Superseded 2026-11-06: 625 frames per JVM with a 6 GiB heap, same frames-per-GiB ratio; see Speed settings.)
+
+The BR4/BR5 manifest enables a first-complete-cell gate for this release. On Windows, the first pending cell must finish its saved scientific outputs and figure publication; success continues automatically, failure stops the combined queue immediately with checkpoints retained. The gate does not run on this Mac and does not claim Windows execution success. No cross-platform replay or pilot was added.
+
+
+BR4/BR5 C1 display correction (2026-11-04): extension configs use400–2300 ADU for C1 and retain406–554 ADU for C2. This changes presentation identity only; all scientific artifacts and paused batch state remain. The original BR1–BR3 configuration is retained. See the change log and validation/C1_display_update_20261104.
+
+
+Adaptive C1 display (2026-11-04): future BR4/BR5 publication uses `style.C1_display_mode="roi_percentile"` and `C1_display_percentiles=[1,99.9]`. One per-cell window is derived from finite nonzero ROI pixels in the fixed ten representative frames, then shared by raw C1 panels and the saved C1 mean overlay. Actual limits and fallback reasons are published. This is presentation only; completed fixed-range pictures and all scientific outputs remain. Fixed mode is still supported.

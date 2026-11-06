@@ -13,10 +13,10 @@ import importlib.util
 import json
 import math
 import os
+import sys
 from pathlib import Path
-import uuid
 
-from .mask import _input, _file, _load_contract, _validate_contract, _acquisition, _json, _read, _close, _result
+from .mask import _input, _file, _load_contract, _validate_contract, _acquisition, _json, _read, _close, _result, _temporary_path
 
 LABELS=('mito-compatible','non-mito-compatible','unknown')
 FIELDS=['source_detection_uid','frame','spatial_selected','pointwise_label','pointwise_unknown_reason',
@@ -33,6 +33,20 @@ def _geometry(package_root):
     path=Path(package_root)/'src/trak_pipeline/compat/vendor/spatial_mask_preview/geometry.py'
     spec=importlib.util.spec_from_file_location('_trak_frozen_ellipse_geometry',path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def _roi_polygon(package_root):
+    """The same ray-crossing polygon test the fit stage uses for fitted_center_inside_ROI."""
+    path=Path(package_root)/'src/trak_pipeline/compat/vendor/TARDIS/path_irrelevant_python/tardis_tau1/locbio.py'
+    name='_trak_frozen_roi_polygon'
+    if name in sys.modules:return sys.modules[name]
+    spec=importlib.util.spec_from_file_location(name,path)
+    module=importlib.util.module_from_spec(spec)
+    sys.modules[name]=module  # locbio defines dataclasses, which resolve their module via sys.modules
+    try:spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name,None);raise
     return module
 
 
@@ -89,7 +103,7 @@ def classify_one(row, mask, raw, contract, scale, tolerance, geometry, frame_rea
 
 
 def _write_csv(path,rows,fields=None):
-    path=Path(path);tmp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    path=Path(path);tmp=_temporary_path(path)
     try:
         with tmp.open('w',encoding='utf-8',newline='') as stream:
             writer=csv.DictWriter(stream,fieldnames=fields or list(rows[0]));writer.writeheader();writer.writerows(rows)
@@ -146,6 +160,15 @@ def execute_assignment(ctx):
     roi_artifact=_input(ctx,'roi','ROI');roi=np.load(_file(roi_artifact,'mask','roi_mask'),allow_pickle=False)
     if roi.dtype!=bool or roi.shape!=shape:raise ValueError('ROI grid differs from original image grid')
     geom=_geometry(ctx.package_root)
+    # Spatial selection (fit QC) uses the continuous ROI polygon. A refined center inside the
+    # polygon can lie in a boundary pixel whose center is outside it (raster value 0), so the
+    # selection check uses the same polygon test. The raster is used only if no polygon exists.
+    vertices_path=roi_artifact.files.get('vertices')
+    roi_vertices=np.load(vertices_path,allow_pickle=False) if vertices_path else None
+    polygon=_roi_polygon(ctx.package_root) if roi_vertices is not None else None
+    def selected_center_inside_roi(x,y):
+        if roi_vertices is None:return geom.point_inside_mask(roi,x,y,tolerance)
+        return bool(polygon.points_in_polygon(np.array([[x,y]],dtype=float),roi_vertices)[0])
     out=ctx.output_dir;out.mkdir(parents=True,exist_ok=True);parts=out/'parts';parts.mkdir(exist_ok=True)
     checked_frames=list(ctx.config.get('sample_frames',ctx.config.get('checking',{}).get('frames',[])))
     if not checked_frames:
@@ -166,7 +189,7 @@ def execute_assignment(ctx):
                     all_counts.extend(saved['counts']);all_reasons.update(saved['unknown_reasons']);independent_checked+=saved['independent_checked']
                     labels_parts.append(part);continue
                 counts=[];reasons=Counter();checked=0
-                temporary=part.with_name(part.name+'.'+uuid.uuid4().hex+'.tmp')
+                temporary=_temporary_path(part)
                 try:
                     with gzip.open(temporary,'wt',encoding='utf-8',newline='') as stream:
                         writer=csv.DictWriter(stream,fieldnames=FIELDS);writer.writeheader()
@@ -184,7 +207,7 @@ def execute_assignment(ctx):
                                 if f in checks and label['spatial_selected'] and not frame_reason and raw is not None:
                                     x,y=float(row['fit_x_px']),float(row['fit_y_px'])
                                     a,baxis=float(row['x_se_nm'])/scale,float(row['y_se_nm'])/scale
-                                    if not geom.point_inside_mask(roi,x,y,tolerance):raise ValueError('Selected refined center lies outside supplied ROI: '+row['source_detection_uid'])
+                                    if not selected_center_inside_roi(x,y):raise ValueError('Selected refined center lies outside supplied ROI: '+row['source_detection_uid'])
                                     expected=independent_label(full,raw==0,x,y,a,baxis,tolerance)
                                     if expected!=label['pointwise_label']:raise AssertionError('Independent pixel enumeration disagrees: '+row['source_detection_uid'])
                                     checked+=1
@@ -201,7 +224,7 @@ def execute_assignment(ctx):
                 _json(out/'checkpoint.json',dict(completed_frames=start+len(ids),expected_frames=len(frames)))
                 ctx.progress('Spatial assignment checkpoint',completed_frames=start+len(ids),expected_frames=len(frames))
     finally:_close(mask)
-    labels=out/'labels.csv.gz';temp=labels.with_name(labels.name+'.'+uuid.uuid4().hex+'.tmp')
+    labels=out/'labels.csv.gz';temp=_temporary_path(labels)
     try:
         with gzip.open(temp,'wt',encoding='utf-8',newline='') as dest:
             writer=csv.DictWriter(dest,fieldnames=FIELDS);writer.writeheader()

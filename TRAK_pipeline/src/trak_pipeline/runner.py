@@ -97,7 +97,12 @@ def run_sample(config,sample,reader=None,validate=False,target=None,presentation
     if 'roi'in prior:_attach_cached_roi(config,sample,prior['roi'])
     available={k:v for k,v in prior.items()if k in('C1','C2','roi')};store=CacheStore(config,sample)
     specs=_specs(config,target);by={s.stage:s for s in default_specs(config)};counter={};actions=[];visiting=set();future_broad=None;pool=None;publication_error=None
+    def resolve_broad():
+        # Nellie runs on its own thread; only stages that depend on broad wait for it.
+        if future_broad is not None and 'broad' not in available:
+            available['broad']=future_broad.result();actions.append(dict(stage='broad',action='compute',artifact_id=available['broad'].id))
     def ensure(stage,materialize=False):
+        if stage=='broad':resolve_broad()
         if stage in('C1','C2','roi'):
             if stage not in available:raise FileNotFoundError('Source artifact missing: '+stage)
             if stage=='roi'and materialize:available[stage]=_ensure_roi(config,sample,available[stage],counter)
@@ -128,7 +133,7 @@ def run_sample(config,sample,reader=None,validate=False,target=None,presentation
     try:
         for spec in specs:
             if spec.stage=='broad'and future_broad is not None:
-                available['broad']=future_broad.result();actions.append(dict(stage='broad',action='compute',artifact_id=available['broad'].id));continue
+                continue  # deferred: fit and other broad-independent stages proceed meanwhile
             if not spec.scientific:
                 try:ensure(spec.stage)
                 except runtime.platform.BatchInfrastructureError:raise
@@ -137,6 +142,7 @@ def run_sample(config,sample,reader=None,validate=False,target=None,presentation
                     publication_error=dict(stage=spec.stage,error=str(error),traceback=traceback.format_exc())
                     _event(config,dict(event='publication_failed',sample_id=sample.sample_id,**publication_error))
             else:ensure(spec.stage)
+        resolve_broad()
     except BaseException:
         runtime.terminate_children()
         raise

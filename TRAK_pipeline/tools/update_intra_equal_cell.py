@@ -45,7 +45,7 @@ def configure(path):
     root = (path.parent / config["data_root"]).resolve()
     control = (root / config.get("control_relative", "_batch_pipeline")).resolve()
     mount = PACKAGE.parent.resolve()
-    if not mount.is_mount() or mount == Path("/") or not root.is_relative_to(mount):
+    if not os.path.ismount(str(mount)) or mount == Path("/") or not root.is_relative_to(mount):
         raise ValueError("The independent external data volume must be mounted")
     if not root.is_dir() or not control.is_dir():
         raise FileNotFoundError("External dataset/control directory is unavailable")

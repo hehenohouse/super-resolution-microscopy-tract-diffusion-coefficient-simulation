@@ -65,7 +65,7 @@ def make_imageplus(ij, movie, pixel_size_um, frame_interval_s):
     return imp
 
 
-def detect(imp, radius_um, threshold, median_filter, original_start, frame_interval_s):
+def detect(imp, radius_um, threshold, median_filter, original_start, frame_interval_s, num_threads=2):
     Model = scyjava.jimport('fiji.plugin.trackmate.Model')
     Settings = scyjava.jimport('fiji.plugin.trackmate.Settings')
     TrackMate = scyjava.jimport('fiji.plugin.trackmate.TrackMate')
@@ -91,7 +91,9 @@ def detect(imp, radius_um, threshold, median_filter, original_start, frame_inter
     if not settings.detectorFactory.checkSettings(settings.detectorSettings):
         raise RuntimeError(str(settings.detectorFactory.getErrorMessage()))
     tm = TrackMate(model, settings)
-    tm.setNumThreads(2)
+    # Frames are distributed across threads with one thread per frame; per-frame LoG
+    # results do not depend on the count. Default 2 preserves the legacy behaviour.
+    tm.setNumThreads(int(num_threads))
     # process() includes tracking. Call only detection to preserve all detections.
     if not tm.execDetection():
         raise RuntimeError(str(tm.getErrorMessage()))

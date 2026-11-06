@@ -18,6 +18,7 @@ from .distances import dump,load_json,GROUPS
 METRICS=('on_percentage','first_mask_ROI_area_um2','mean_ROI_area_um2')
 COUNT_FIELDS=('On','Not_on','unknown','QC_excluded','selected','ROI_candidates')
 VIEWS=('signed','area','peak')
+CONDITIONS=('WT','TDK','MDK')
 
 
 def _portable(root,value):
@@ -59,6 +60,18 @@ def _samples(samples,artifacts_by_sample):
         else:raise TypeError('summarize requires Sample objects or {sample: Sample, artifacts: mapping}')
 
 
+def _condition_order(config):
+    """Validate a declared cohort without changing the historical full roster."""
+    values=config.get('conditions',list(CONDITIONS))
+    if (not isinstance(values,list) or not values
+            or any(not isinstance(value,str) or value not in CONDITIONS for value in values)
+            or len(set(values))!=len(values)):
+        raise ValueError('conditions must be a nonempty ordered list of unique WT, TDK or MDK labels')
+    if len(values)==len(CONDITIONS) and values!=list(CONDITIONS):
+        raise ValueError('The full condition roster must retain the historical WT, TDK, MDK order')
+    return list(values)
+
+
 def _summary_parameters(config):
     """Method v2 enforces cell-first area normalization and equal-BR averaging."""
     defaults=dict(method_id='hierarchy_summary',method_version='2',cell_weighting='equal',condition_weighting='equal_replica',BR_weighting='equal',
@@ -67,18 +80,34 @@ def _summary_parameters(config):
         intra_groups=['On','Not-on'],signed_area_min_abs=.01,minimum_signed_area_abs=.01,
         require_positive_peak=True,require_both_groups=True,area_order='normalize_cells_then_equal_cell_mean',condition_area_order='equal_BR_mean_of_corrected_area_means',
         peak_within_BR='mean_cell_own_positive_peak_normalized',negative_bins_retained=True,SD_ddof=1)
+    # Cohort/replica order is scientific configuration. Preserve the historical
+    # method dictionary when no explicit roster was supplied by an old config.
+    replicas=config.get('replicas')
+    if replicas is not None:
+        import re
+        if (not isinstance(replicas,list) or not replicas
+                or any(not isinstance(br,str) or not re.fullmatch(r'BR[1-9][0-9]*',br) for br in replicas)
+                or len(set(replicas))!=len(replicas)):
+            raise ValueError('replicas must be a nonempty ordered list of unique BR labels')
+        defaults['replica_order']=list(replicas)
+    conditions=_condition_order(config)
+    if conditions!=list(CONDITIONS):defaults['condition_order']=conditions
     supplied=config.get('summary',{})
     if not isinstance(supplied,dict):raise ValueError('summary scientific parameters must be a mapping')
     for key,value in supplied.items():
         if key not in defaults:raise ValueError('Unsupported hierarchy summary scientific parameter: '+key)
         if value!=defaults[key]:raise ValueError('Unsupported hierarchy summary scientific setting '+key+'; method v2 requires '+str(defaults[key])+'; another method version is required')
-    if list(config.get('conditions',['WT','TDK','MDK']))!=['WT','TDK','MDK']:raise ValueError('Hierarchy summary method v2 supports conditions WT, TDK, MDK in that order')
     return defaults
 
 
 def _expected_inventory(config,completed,root):
+    conditions=_condition_order(config)
+    if conditions!=list(CONDITIONS) and config.get('molecule') and any(row.get('molecule')!=config['molecule'] for row in completed):
+        raise ValueError('Completed cell molecule differs from the summary configuration')
     expected=config.get('_expected_samples')
-    if expected is None:return list(completed)
+    if expected is None:
+        if any(row.get('genotype') not in conditions for row in completed):raise ValueError('Completed cell condition is outside the declared condition roster')
+        return list(completed)
     rows=[];seen=set()
     for item in expected:
         if isinstance(item,Sample):
@@ -94,7 +123,8 @@ def _expected_inventory(config,completed,root):
         location=row.get('source_directory_relative') or row.get('directory') or row.get('source_directory')
         if location is None:raise ValueError('Expected inventory lacks source_directory_relative for '+sid)
         row['source_directory_relative']=_portable(root,location).relative_to(root).as_posix()
-        if row.get('genotype') not in ('WT','TDK','MDK') or not row.get('BR') or not row.get('cell'):raise ValueError('Expected inventory lacks condition/BR/cell identity for '+sid)
+        if row.get('genotype') not in conditions or not row.get('BR') or not row.get('cell'):raise ValueError('Expected inventory lacks declared condition/BR/cell identity for '+sid)
+        if conditions!=list(CONDITIONS) and config.get('molecule') and row.get('molecule')!=config['molecule']:raise ValueError('Expected inventory molecule differs from the summary configuration: '+sid)
         rows.append(row)
     complete_ids={row['sample_id'] for row in completed}
     if not complete_ids<=seen:raise ValueError('Completed cells are outside the declared expected inventory')
@@ -104,37 +134,116 @@ def _expected_inventory(config,completed,root):
     return sorted(rows,key=lambda r:r['sample_id'])
 
 
+
+def _apply_failed_samples(config, inventory, cells):
+    """Failed execution is terminal only when no committed cell science exists."""
+    values=config.get('summary_failed_sample_ids',[])
+    if (not isinstance(values,list) or any(not isinstance(sid,str) or not sid for sid in values)
+            or len(set(values))!=len(values)):
+        raise ValueError('summary_failed_sample_ids must contain unique sample IDs')
+    expected={row['sample_id'] for row in inventory}
+    if not set(values)<=expected:raise ValueError('Failed summary sample is outside the expected inventory')
+    result=dict(cells)
+    for sid in values:
+        if sid not in result:
+            result[sid]=dict(sample_id=sid,status='failed',eligible=False,curves={},reasons=['cell_analysis_failed'])
+    return result
+
+
+def _normalized_saved_counts(value, sample_id, source):
+    """Read a declared saved count schema; no point table or upstream work."""
+    if not isinstance(value,dict):raise ValueError('Saved localization counts are not a mapping: '+sample_id+' ('+source+')')
+    result={}
+    for key in COUNT_FIELDS:
+        alias='Not-on' if key=='Not_on' and key not in value else key
+        if alias not in value:raise ValueError('Missing saved count '+key+' for '+sample_id+' ('+source+')')
+        raw=value[alias]
+        try:number=float(raw)
+        except (TypeError,ValueError):raise ValueError('Invalid saved count '+key+' for '+sample_id+' ('+source+')')
+        if isinstance(raw,bool) or not np.isfinite(number) or number<0 or not number.is_integer():
+            raise ValueError('Invalid saved count '+key+' for '+sample_id+' ('+source+')')
+        result[key]=int(number)
+    if (result['On']+result['Not_on']+result['unknown']!=result['selected']
+            or result['selected']+result['QC_excluded']!=result['ROI_candidates']):
+        raise ValueError('Localization count conservation failed '+sample_id+' ('+source+')')
+    return result
+
+
+def _saved_block_area_metrics(sample,artifacts,config):
+    paths=[]
+    if sample.legacy_output:paths.append(Path(sample.legacy_output)/'masks/per_block_statistics.csv')
+    for name in ('mask_roi','mask_cleanup'):
+        artifact=artifacts.get(name)
+        if artifact and artifact.files.get('statistics'):paths.append(Path(artifact.files['statistics']))
+    path=next((p for p in paths if p.is_file()),None)
+    if path is None:raise FileNotFoundError('Saved ROI area metrics/block statistics missing: '+sample.id+'; summarize cannot run upstream science')
+    areas=pd.read_csv(path,float_precision='round_trip')
+    if areas.empty:raise ValueError('Saved block ROI area statistics are empty: '+str(path))
+    if 'original_frame_start' in areas:areas=areas.sort_values('original_frame_start')
+    elif 'block_index' in areas:areas=areas.sort_values('block_index')
+    key=next((k for k in ('mask_ROI_area_um2','ROI_area_um2','clean_ROI_area_um2','ROI_foreground_area_um2') if k in areas),None)
+    if key is None:
+        pxkey=next((k for k in ('mask_ROI_area_px2','mask_ROI_area_pixel2','ROI_area_pixel2','ROI_foreground_pixels','ROI_foreground_pixel2','final_ROI_area_pixel2','clean_ROI_area_pixel2') if k in areas),None)
+        if pxkey is None:raise ValueError('Saved block ROI area field is missing: '+str(path))
+        values=areas[pxkey].to_numpy(float)*(config['acquisition']['pixel_size_nm']/1000)**2
+    else:values=areas[key].to_numpy(float)
+    weights=(areas['source_frames'].to_numpy(float) if 'source_frames' in areas else
+        (areas.original_frame_stop_exclusive-areas.original_frame_start).to_numpy(float)
+        if {'original_frame_start','original_frame_stop_exclusive'}<=set(areas) else None)
+    if weights is None:raise ValueError('Block durations are missing; summarize does not infer time weights: '+str(path))
+    if not np.isfinite(weights).all() or np.any(weights<=0):raise ValueError('Saved mask block durations must be positive: '+str(path))
+    if np.any(values[np.isfinite(values)]<0):raise ValueError('Saved ROI mask area cannot be negative: '+str(path))
+    return dict(first_mask_ROI_area_um2=float(values[0]),mean_ROI_area_um2=float(values@weights/weights.sum()))
+
+
+def _load_scalar_metrics(sample,artifacts,config):
+    """Normalize modern nested and legacy flat saved statistics explicitly.
+
+    Counts and mask areas are separate products. A legacy statistics adapter
+    carries flat counts/areas, whereas modern statistics uses metrics.counts.
+    Classification records remain authoritative cross-checks in either layout.
+    """
+    stat=artifacts.get('statistics');meta={}
+    if stat and stat.files.get('metadata') and Path(stat.files['metadata']).is_file():meta=load_json(stat.files['metadata'])
+    metric=meta.get('metrics') or (stat.metadata.get('metrics') if stat else None) or {}
+    if not isinstance(metric,dict):raise ValueError('Saved cell metrics are not a mapping: '+sample.id)
+    candidates=[]
+    if 'counts' in metric:candidates.append(('statistics.metrics.counts',metric['counts']))
+    elif all(k in metric or (k=='Not_on' and 'Not-on' in metric) for k in COUNT_FIELDS):
+        candidates.append(('legacy flat statistics.metrics',metric))
+    assignment=artifacts.get('assignment')
+    if assignment and assignment.metadata.get('counts') is not None:
+        candidates.append(('assignment artifact metadata',assignment.metadata['counts']))
+    paths=[]
+    if assignment and assignment.files.get('summary'):paths.append(Path(assignment.files['summary']))
+    if sample.legacy_output:paths.append(Path(sample.legacy_output)/'classification_summary.json')
+    seen=set()
+    for path in paths:
+        if path.is_file() and str(path.resolve()) not in seen:
+            seen.add(str(path.resolve()));saved=load_json(path)
+            candidates.append((str(path),saved.get('counts',saved)))
+    if not candidates:raise FileNotFoundError('Complete saved localization counts missing: '+sample.id+'; summarize cannot run upstream science')
+    normalized=[(source,_normalized_saved_counts(value,sample.id,source)) for source,value in candidates]
+    counts=normalized[0][1]
+    for source,other in normalized[1:]:
+        if other!=counts:raise ValueError('Conflicting saved localization counts for '+sample.id+' ('+normalized[0][0]+' vs '+source+')')
+    denominator=counts['On']+counts['Not_on'];percentage=100*counts['On']/denominator if denominator else None
+    saved_percentage=metric.get('on_percentage')
+    if saved_percentage is not None:
+        if percentage is None or not np.isclose(float(saved_percentage),percentage,rtol=0,atol=1e-8):
+            raise ValueError('Saved On percentage disagrees with On/(On+Not-on): '+sample.id)
+    areas={key:metric[key] for key in METRICS[1:] if key in metric}
+    if len(areas)!=2:areas=dict(_saved_block_area_metrics(sample,artifacts,config),**areas)
+    for key,value in areas.items():
+        if value is not None and np.isfinite(float(value)) and float(value)<0:raise ValueError('Saved ROI mask area cannot be negative: '+sample.id+' '+key)
+    return dict(counts,on_percentage=percentage,**areas)
+
+
 def _load_cell(sample,artifacts,config):
     record=dict(sample.metadata,sample_id=sample.id,source_directory_relative=sample.directory.relative_to(Path(config['data_root'])).as_posix(),status='complete',molecule=sample.metadata.get('molecule',config.get('molecule','')))
     record.setdefault('genotype',record.get('condition'));record.setdefault('BR',record.get('replica'));record.setdefault('cell',sample.directory.name)
-    old=sample.legacy_output;stat=artifacts.get('statistics');decomp=artifacts.get('decomposition');assignment=artifacts.get('assignment')
-    if stat and stat.files.get('metadata') and Path(stat.files['metadata']).is_file():meta=load_json(stat.files['metadata'])
-    else:meta={}
-    if not meta.get('metrics') and stat and stat.metadata.get('metrics'):meta=dict(meta,metrics=stat.metadata['metrics'])
-    if meta.get('metrics'):
-        metric=meta['metrics'];record.update(metric['counts']);record.update({key:metric.get(key) for key in METRICS})
-    elif old:
-        path=Path(old)/'classification_summary.json'
-        if not path.is_file() and assignment:path=assignment.file('summary')
-        if not path.is_file():raise FileNotFoundError('Saved classification summary missing: '+sample.id)
-        summary=load_json(path);counts=summary.get('counts',summary)
-        for key in COUNT_FIELDS:
-            source=key if key in counts else ('Not-on' if key=='Not_on' else key)
-            if source not in counts:raise ValueError('Missing saved count '+key+' for '+sample.id)
-            record[key]=int(counts[source])
-        denom=record['On']+record['Not_on'];record['on_percentage']=100*record['On']/denom if denom else None
-        maskstats=Path(old)/'masks/per_block_statistics.csv'
-        if not maskstats.is_file():raise FileNotFoundError('Saved block area statistics missing: '+sample.id)
-        areas=pd.read_csv(maskstats,float_precision='round_trip');key=next((k for k in ('mask_ROI_area_um2','ROI_area_um2','clean_ROI_area_um2','ROI_foreground_area_um2') if k in areas),None)
-        if key is None:
-            pxkey=next((k for k in ('mask_ROI_area_px2','mask_ROI_area_pixel2','ROI_area_pixel2','ROI_foreground_pixels','ROI_foreground_pixel2','final_ROI_area_pixel2','clean_ROI_area_pixel2') if k in areas),None)
-            if pxkey is None:raise ValueError('Saved block ROI area field is missing: '+str(maskstats))
-            values=areas[pxkey].to_numpy(float)*(config.get('acquisition',{}).get('pixel_size_nm',117)/1000)**2
-        else:values=areas[key].to_numpy(float)
-        weights=areas['source_frames'].to_numpy(float) if 'source_frames' in areas else (areas.original_frame_stop_exclusive-areas.original_frame_start).to_numpy(float) if {'original_frame_start','original_frame_stop_exclusive'}<=set(areas) else None
-        if weights is None:raise ValueError('Block durations are missing; summarize does not infer time weights')
-        record['first_mask_ROI_area_um2']=float(values[0]);record['mean_ROI_area_um2']=float(values@weights/weights.sum())
-    else:raise FileNotFoundError('Saved cell metrics missing: '+sample.id+'; summarize cannot run upstream science')
+    old=sample.legacy_output;decomp=artifacts.get('decomposition')
+    record.update(_load_scalar_metrics(sample,artifacts,config))
     for key in COUNT_FIELDS:
         value=record[key]
         if int(value)!=value or value<0:raise ValueError('Invalid localization count '+sample.id+' '+key)
@@ -163,19 +272,88 @@ def _load_cell(sample,artifacts,config):
     return record,dict(sample_id=sample.id,status='complete',eligible=not reasons,reasons=reasons,curves=curves,edges=edges,method_definition=method,result_digest=digest({g:np.nan_to_num(curves[g],nan=0).tolist() for g in GROUPS}))
 
 
-def _metric_nodes(records,root):
+def _condition_directories(config,root):
+    """Output locations are explicit, portable, and separate from method IDs."""
+    values=config.get('condition_directories',{})
+    if not isinstance(values,dict):raise ValueError('condition_directories must be a mapping')
+    allowed=_condition_order(config);result={}
+    for condition,value in values.items():
+        if condition not in allowed or not isinstance(value,str) or not value:
+            raise ValueError('condition_directories requires declared condition labels and nonempty paths')
+        result[condition]=_portable(root,value)
+    return result
+
+
+def _condition_summary_nodes(core,inventory,cells,config):
+    """Use the frozen aggregation kernel, omitting undeclared empty conditions.
+
+    The historical full-roster path is returned unchanged. A proper subset has
+    the same cell/BR calculations, while its comparison metadata and ordering
+    explicitly contain only that cohort; no global kernel state is mutated.
+    """
+    settings=dict(data_root=config['data_root'])
+    if 'replicas' in config:settings['replicas']=list(config['replicas'])
+    nodes=core.summarize_cells(inventory,cells,settings)
+    conditions=_condition_order(config);directories=_condition_directories(config,Path(config['data_root']))
+    for node in nodes:
+        if node['level']=='condition' and node.get('condition') in directories:node['directory']=directories[node['condition']]
+    if conditions==list(CONDITIONS):return nodes
+    order={condition:i for i,condition in enumerate(conditions)}
+    kept=[(i,node) for i,node in enumerate(nodes) if node['level']!='comparison' and node.get('condition') in order]
+    kept=[node for _,node in sorted(kept,key=lambda item:(item[1]['level']=='condition',order[item[1]['condition']],item[0]))]
+    top=next(node for node in nodes if node['level']=='comparison')
+    top['key']='_'.join(conditions)
+    top['members'].sort(key=lambda row:order[row['condition']])
+    top['exclusions']=[row for row in top['exclusions'] if row['condition'] in order]
+    top['exclusions'].sort(key=lambda row:order[row['condition']])
+    for group in GROUPS:
+        for view in VIEWS:
+            part=top['groups'][group][view]
+            for name in ('series','series_sd','series_sem','series_n'):
+                part[name]={condition:part[name][condition] for condition in conditions if condition in part[name]}
+    return kept+[core._finalize(top)]
+
+
+def _metric_nodes(records,root,conditions=None,inventory=None,condition_directories=None):
     brgroups=defaultdict(list);cgroups=defaultdict(list);nodes=[]
     for record in records:brgroups[(record['genotype'],record['BR'])].append(record);cgroups[record['genotype']].append(record)
+    expected=list(inventory or records)
+    # Proper-subset cohorts retain empty expected BRs as unavailable, never as
+    # zero-valued measurements. Existing full-roster output behavior is kept.
+    if conditions is not None:
+        for record in expected:brgroups.setdefault((record['genotype'],record['BR']),[]);cgroups.setdefault(record['genotype'],[])
+        brgroups=dict(sorted(brgroups.items(),key=lambda item:(conditions.index(item[0][0]),list(brgroups).index(item[0]))))
+        cgroups={condition:cgroups[condition] for condition in conditions if condition in cgroups}
     brstats={};conditionstats={}
-    for key,rows in brgroups.items():brstats[key]={metric:_stats([r[metric] for r in rows],nbr=1) for metric in METRICS}
+    for key,rows in brgroups.items():brstats[key]={metric:_stats([r[metric] for r in rows],nbr=1 if rows else 0) for metric in METRICS}
     for condition,rows in cgroups.items():
         children=[value for (c,_),value in brstats.items() if c==condition];conditionstats[condition]={metric:_stats([child[metric]['mean'] for child in children],ncells=sum(child[metric]['n_cells_valid'] for child in children),nbr=sum(child[metric]['n']>0 for child in children)) for metric in METRICS}
     for record in records:
         nodes.append(dict(level='cell',key=record['sample_id'],directory=str(root/record['source_directory_relative']),records=[record],BR_records=[],summary_records=[dict(condition=record['genotype'],metric=metric,**_stats([record.get(metric)],nbr=1)) for metric in METRICS]))
-    for key,rows in brgroups.items():nodes.append(dict(level='BR',key='/'.join(key),directory=str((root/rows[0]['source_directory_relative']).parent),records=rows,BR_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS],summary_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS]))
-    for condition,rows in cgroups.items():nodes.append(dict(level='condition',key=condition,directory=str(root/condition),records=rows,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() if c==condition for metric in METRICS],summary_records=[dict(condition=condition,metric=metric,**conditionstats[condition][metric]) for metric in METRICS]))
-    nodes.append(dict(level='comparison',key='WT_TDK_MDK',directory=str(root),records=records,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() for metric in METRICS],summary_records=[dict(condition=c,metric=metric,**values[metric]) for c,values in conditionstats.items() for metric in METRICS]))
+    for key,rows in brgroups.items():
+        source=next(row for row in expected if (row['genotype'],row['BR'])==key)
+        nodes.append(dict(level='BR',key='/'.join(key),directory=str((root/source['source_directory_relative']).parent),records=rows,BR_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS],summary_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS]))
+    for condition,rows in cgroups.items():
+        directory=(condition_directories or {}).get(condition,root/condition)
+        nodes.append(dict(level='condition',key=condition,directory=str(directory),records=rows,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() if c==condition for metric in METRICS],summary_records=[dict(condition=condition,metric=metric,**conditionstats[condition][metric]) for metric in METRICS]))
+    nodes.append(dict(level='comparison',key='_'.join(conditions or CONDITIONS),directory=str(root),records=records,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() for metric in METRICS],summary_records=[dict(condition=c,metric=metric,**values[metric]) for c,values in conditionstats.items() for metric in METRICS]))
+    if conditions is not None:
+        for node in nodes:node['condition_order']=list(conditions)
     return nodes
+
+
+
+def _reader_tables(node_record,root):
+    """Keep the fixed workbook schema when an expected BR has no saved cells."""
+    from reader_table_data import build_reader_tables,MEAN_HEADERS,MEAN_TYPES,MEAN_WIDTHS
+    sheets=build_reader_tables(node_record,root)
+    if node_record['level']!='cell' and not any(sheet['name']=='Localization Means' for sheet in sheets):
+        protein=node_record.get('molecule') or ''
+        sheets.insert(-1,dict(name='Localization Means',title=protein+' | localization count means',
+            subtitle='No completed cell counts are available for this expected group.',
+            notes='Unavailable values remain blank; pending cells do not contribute zero observations.',
+            headers=MEAN_HEADERS,rows=[],column_types=MEAN_TYPES,widths=MEAN_WIDTHS,header_row=6,data_start_row=7))
+    return sheets
 
 
 def _summary_input_signature(config,entries,method_config,root):
@@ -191,7 +369,10 @@ def _summary_input_signature(config,entries,method_config,root):
         identity.update(sample_id=sample.id,source_directory_relative=sample.directory.relative_to(root).as_posix())
         signatures.append(dict(identity=identity,scientific_artifacts={key:value.id for key,value in artifacts.items() if key in ('fit','assignment','distances','decomposition','statistics','mask_roi')}))
     expected=[{key:row.get(key) for key in ('sample_id','genotype','condition','BR','replica','cell','molecule','source_directory_relative')} for row in _expected_inventory(config,[],root)]
-    return digest(_plain(dict(summary=method_config,scientific_definitions={key:value for key,value in config.get('methods',{}).items() if key not in ('presentation','c1_mean')},inputs=sorted(signatures,key=lambda x:x['identity']['sample_id']),expected=sorted(expected,key=lambda x:x.get('sample_id','')))))
+    payload=dict(summary=method_config,scientific_definitions={key:value for key,value in config.get('methods',{}).items() if key not in ('presentation','c1_mean')},inputs=sorted(signatures,key=lambda x:x['identity']['sample_id']),expected=sorted(expected,key=lambda x:x.get('sample_id','')))
+    if 'summary_failed_sample_ids' in config:payload['failed_sample_ids']=sorted(config['summary_failed_sample_ids'])
+    if config.get('condition_directories'):payload['output_condition_directories']={key:value.relative_to(root).as_posix() for key,value in _condition_directories(config,root).items()}
+    return digest(_plain(payload))
 
 
 def _summary_numeric_files_exist(manifest,root):
@@ -219,12 +400,13 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
     import intra_summary_core as core
     edges=next(iter(cells.values()))['edges'] if cells else np.linspace(0,3,301)
     if edges.shape!=(301,) or not np.allclose(edges,np.linspace(0,3,301),rtol=0,atol=1e-12):raise ValueError('Current hierarchy summary method supports the frozen 0–3 µm / 300-bin definition only')
-    nodeobjects=core.summarize_cells(inventory,cells,dict(data_root=str(root)))
+    cells=_apply_failed_samples(config,inventory,cells)
+    nodeobjects=_condition_summary_nodes(core,inventory,cells,dict(config,data_root=str(root)))
     for node in nodeobjects:node['molecule']=config.get('molecule',records[0].get('molecule','') if records else '')
     summaryid=digest(dict(method_id='hierarchy_summary',method_version='2',parameters=method_config,scientific_definitions=sorted(methods)))[:16]
     manifestdir.mkdir(parents=True,exist_ok=True)
-    metricnodes=_metric_nodes(records,root);jobs=[];nodes=[]
-    from reader_table_data import build_reader_tables
+    conditions=method_config.get('condition_order')
+    metricnodes=_metric_nodes(records,root,conditions=conditions,inventory=inventory,condition_directories=_condition_directories(config,root));jobs=[];nodes=[]
     for metricnode in metricnodes:
         directory=Path(metricnode['directory']);data=directory/'analysis_results'/('modular_summary_'+summaryid);data.mkdir(parents=True,exist_ok=True)
         matching=next((n for n in nodeobjects if n['key']==metricnode['key'] and n['level']==metricnode['level']),None)
@@ -238,7 +420,7 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
         _save_csv(pd.DataFrame(metricnode['summary_records']),data/'summary_statistics.csv');_save_csv(pd.DataFrame(metricnode['BR_records']),data/'BR_statistics.csv')
         from localization_count_data import count_csv_specs
         noderecord=dict(level=metricnode['level'],key=metricnode['key'],data=str(data),molecule=config.get('molecule'))
-        reader=dict(key=metricnode['key'],level=metricnode['level'],data_dir=str(data),output_path=str(directory/'Analysis_Figures_Cell_Metrics'/'Cell_Metrics.xlsx'),sheets=build_reader_tables(noderecord,root))
+        reader=dict(key=metricnode['key'],level=metricnode['level'],data_dir=str(data),output_path=str(directory/'Analysis_Figures_Cell_Metrics'/'Cell_Metrics.xlsx'),sheets=_reader_tables(noderecord,root))
         for spec in count_csv_specs(reader):_save_csv(pd.DataFrame(spec['rows'],columns=spec['headers']),data/spec['filename'])
         dump(data/'reader_workbook_job.json',reader);dump(data/'metric_node.json',metricnode)
         matching=next((n for n in nodeobjects if n['key']==metricnode['key'] and n['level']==metricnode['level']),None)
@@ -266,8 +448,10 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
 def _metric_plot(node,figures):
     import matplotlib.pyplot as plt
     records=node['records'];fig,axes=plt.subplots(1,3,figsize=(15,5));colors={'WT':'#2166AC','TDK':'#D95F02','MDK':'#1B9E77'}
-    conditions=list(dict.fromkeys(r['genotype'] for r in records))
+    present={r['genotype'] for r in records}
+    conditions=[condition for condition in node.get('condition_order',list(dict.fromkeys(r['genotype'] for r in records))) if condition in present]
     for ax,metric in zip(axes,METRICS):
+        if not records:ax.text(.5,.5,'No completed cell data',transform=ax.transAxes,ha='center',va='center')
         for i,condition in enumerate(conditions):
             rows=[r for r in records if r['genotype']==condition];x=np.full(len(rows),i);ax.scatter(x,[r.get(metric,np.nan) for r in rows],color=colors.get(condition,'gray'),s=12,alpha=.6)
             saved=[r for r in node['summary_records'] if r['condition']==condition and r['metric']==metric]
@@ -291,12 +475,15 @@ def _overlays(node,figures):
         for range_name,xmax in [('full',3),('zoom',.5)]:
             fig,axes=plt.subplots(1,len(panels),figsize=(6*len(panels),5),squeeze=False,sharey=True)
             for ax,panel in zip(axes[0],panels):
+                drawn=False
                 for group in GROUPS:
                     p=node['groups'][group][view];value=p['series'].get(panel) if comparison else p['mean'];sd=p.get('series_sd',{}).get(panel) if comparison else p['sd']
                     if value is None:continue
-                    value=np.asarray(value);ax.plot(node['x'],value,color=colors[group],label=group)
+                    value=np.asarray(value);ax.plot(node['x'],value,color=colors[group],label=group);drawn=True
                     if sd is not None:sd=np.asarray(sd);ax.fill_between(node['x'],value-sd,value+sd,color=colors[group],alpha=.15)
-                ax.set(title=panel or node['key'],xlim=(0,xmax),ylim=limits,xlabel='Distance (µm)',ylabel='Dimensionless' if view=='peak' else 'Density (µm⁻¹)');ax.axhline(0,color='gray',lw=.6);ax.legend();ax.grid(alpha=.2)
+                ax.set(title=panel or node['key'],xlim=(0,xmax),ylim=limits,xlabel='Distance (µm)',ylabel='Dimensionless' if view=='peak' else 'Density (µm⁻¹)');ax.axhline(0,color='gray',lw=.6);ax.grid(alpha=.2)
+                if drawn:ax.legend()
+                else:ax.text(.5,.5,'No valid Intra curve',transform=ax.transAxes,ha='center',va='center')
             fig.suptitle(node['progress']['status']+' | On / Not-on | '+view);fig.tight_layout();target=figures/f'Intra_On_NotOn_{view}_{range_name}.png';temporary=figures/('.'+uuid.uuid4().hex+'_'+target.name);fig.savefig(temporary,dpi=180);plt.close(fig);atomic_replace(temporary,target)
 
 

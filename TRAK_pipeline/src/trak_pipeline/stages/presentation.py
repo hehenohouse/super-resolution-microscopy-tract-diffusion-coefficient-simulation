@@ -5,10 +5,12 @@ statistics/decomposition/bands are reported; refresh never creates them.
 """
 from __future__ import annotations
 import html, json, os
+from dataclasses import replace
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from ..types import StageResult
+from ..display import resolve_c1_display
 from ..io import replace as atomic_replace
 from .distances import dump,load_json,GROUPS
 from .statistics import REPRESENTATIVE_FRAMES
@@ -37,7 +39,7 @@ def _read(path):
 
 def _finish(fig,path,footer=None):
     import matplotlib.pyplot as plt
-    if footer:fig.text(.5,.015,footer,ha='center',fontsize=8)
+    if footer:fig.text(.5,.015,footer,ha='center',fontsize=8,color='white' if sum(fig.get_facecolor()[:3])<1.5 else 'black')
     fig.tight_layout(rect=(0,.055 if footer else 0,1,.95));temp=Path(path).with_name('.'+Path(path).name+'.tmp.png');fig.savefig(temp,dpi=180);plt.close(fig);atomic_replace(temp,path)
 
 
@@ -89,6 +91,21 @@ def execute(ctx):
         image=ax.pcolormesh(h['SE_edges_nm'],h['SE_edges_nm'],h['SE_2D__'+group].T,cmap='viridis',vmin=0,vmax=hm['shared_2D_vmax']);info=hm['outside_counts']['SE_2D__'+group];ax.set(title=f"{group}: shown {info['displayed']}; outside {info['outside_range']}; NA {info['nonfinite']}",xlabel='X SE (nm)',ylabel='Y SE (nm)',aspect='equal')
     fig.colorbar(image,ax=axes,label='Localizations per 5 nm × 5 nm bin');fig.suptitle(sample+' | shared linear scale');fig.savefig(figdir/'SE_2D_All_On_NotOn_shared_linear.png',dpi=180);plt.close(fig)
     with np.load(stats/'pooled_coordinates.npz',allow_pickle=False) as saved:pooled={k:saved[k].copy() for k in saved.files}
+    # Resolve the C1 viewing window once per cell. Raw pixels and all scientific
+    # inputs stay read-only; the request's style/parameters remain untouched.
+    requested_style=dict(style)
+    if requested_style.get('C1_display_mode','fixed')=='roi_percentile':
+        import tifffile
+        sample_frames=requested_style.get('C1_display_sample_frames',ctx.config.get('sample_frames',REPRESENTATIVE_FRAMES))
+        with tifffile.TiffFile(ctx.sample.C1_file) as source_c1:
+            c1_display=resolve_c1_display(requested_style,frame_ids=sample_frames,
+                frame_reader=lambda f:source_c1.pages[f].asarray(),roi_mask=pooled['roi_mask'])
+    else:
+        c1_display=resolve_c1_display(requested_style)
+    style=dict(requested_style,C1_display_ADU=c1_display['limits_ADU'])
+    c1_footer=(f"C1 display {style['C1_display_ADU'][0]:g}-{style['C1_display_ADU'][1]:g} ADU "
+               f"({c1_display['mode']}); fixed within this cell.\nDisplay only; raw pixels, masks, labels and analysis unchanged.")
+    dump(out/'display_ranges.json',dict(C1=c1_display,C2=dict(mode='fixed',limits_ADU=style.get('C2_display_ADU',[406,554])),scientific_stage_calls=0))
     crop=pooled['crop_xyxy_px'];vertices=pooled['vertices'];pictures=[]
     for name,groups in [('pooled_On',('On',)),('pooled_NotOn',('Not-on',)),('pooled_All_selected',('On','Not-on','unknown'))]:
         fig,ax=plt.subplots(figsize=(7,9),facecolor='black');_scatter(ax,{g:pooled[g] for g in groups},vertices,crop,sample+' | '+', '.join(f'{g}: {len(pooled[g]):,}' for g in groups),pixel_size_nm=c['pixel_size_nm'],dot_radius_px=style.get('dot_radius_px',.2));ax.title.set_color('white');_finish(fig,figdir/(name+'.png'))
@@ -98,7 +115,7 @@ def execute(ctx):
     meanpath=ctx.inputs.get('c1_mean').files.get('mean') if 'c1_mean' in ctx.inputs else None
     if not meanpath or not Path(meanpath).is_file():raise FileNotFoundError('Missing saved C1 mean; refresh never averages images')
     mean=np.load(meanpath,allow_pickle=False).copy();mean[~pooled['roi_mask']]=0
-    fig,ax=plt.subplots(figsize=(7,9),facecolor='black');_scatter(ax,{'Not-on':pooled['Not-on']},vertices,crop,f'{sample} | Not-on {len(pooled["Not-on"]):,} | mean C1, all raw frames',mean,pixel_size_nm=c['pixel_size_nm'],display_range=style.get('C1_display_ADU',[407,651]),dot_radius_px=style.get('dot_radius_px',.2));ax.title.set_color('white');_finish(fig,figdir/'NotOn_on_C1_mean2500.png')
+    fig,ax=plt.subplots(figsize=(7,9),facecolor='black');_scatter(ax,{'Not-on':pooled['Not-on']},vertices,crop,f'{sample} | Not-on {len(pooled["Not-on"]):,} | mean C1, all raw frames',mean,pixel_size_nm=c['pixel_size_nm'],display_range=style.get('C1_display_ADU',[407,651]),dot_radius_px=style.get('dot_radius_px',.2));ax.title.set_color('white');_finish(fig,figdir/'NotOn_on_C1_mean2500.png',c1_footer)
     fig,ax=plt.subplots(figsize=(12,4))
     for key,color in [('On',COLORS['On']),('Not_on',COLORS['Not-on']),('QC_excluded','#F39416'),('unknown','#888888')]:ax.plot(frame.frame,frame[key],lw=.6,label=key,color=color)
     ax.set(xlabel='Original frame',ylabel='Localizations per frame');ax.legend();fig.suptitle(sample);_finish(fig,figdir/'01_counts.png')
@@ -156,11 +173,16 @@ def execute(ctx):
         meantext=f"{s['mean_um2']:.2f}" if s['mean_um2'] is not None else 'unavailable';mediantext=f"{s['median_um2']:.2f}" if s['median_um2'] is not None else 'unavailable'
         ax.set(title=f'{scope}: mean {meantext} µm²; median {mediantext} µm²',ylabel='Mask area (µm²)')
     axes[1].set_xlabel('Original frame');fig.suptitle(sample+' | mask area');_finish(fig,figdir/'09_mask_area.png','Binary mask area within support blocks; no position-error expansion.')
-    _four_frames(ctx,stats,figdir,pooled,c)
-    expected=required_cell_pngs(c['frames'],c['segment_frames']);actual={p.name for p in figdir.glob('*.png')};missing=sorted(expected-actual)
+    plot_ctx=replace(ctx,config=dict(ctx.config,style=style))
+    _four_frames(plot_ctx,stats,figdir,pooled,c)
+    expected=required_cell_pngs(c['frames'],c['segment_frames']);actual={p.name for p in figdir.glob('*.png')if not p.name.startswith('._')};missing=sorted(expected-actual)
     entries=''.join(f'<li><a href="{html.escape(name)}">{html.escape(name)}</a><br><img src="{html.escape(name)}" width="700"></li>' for name in sorted(actual))
-    (figdir/'INDEX.html').write_text('<html><body><h1>'+html.escape(sample)+'</h1><p>Pure refresh from saved scientific products. Scientific stage calls: 0.</p><ul>'+entries+'</ul></body></html>',encoding='utf-8')
-    result=dict(figures=str(figdir),scientific_stage_calls=0,missing=missing,images=sorted(actual),adopted_readonly=False)
+    display_note=(f"C1 display: {c1_display['limits_ADU']} ADU; mode {c1_display['mode']}. "
+                  "One window per cell, shared by representative frames and saved C1 mean. Display only; raw pixels and scientific analysis unchanged.")
+    (figdir/'INDEX.html').write_text('<html><body><h1>'+html.escape(sample)+'</h1><p>Pure refresh from saved scientific products. Scientific stage calls: 0.</p><p>'+html.escape(display_note)+'</p><ul>'+entries+'</ul></body></html>',encoding='utf-8')
+    result=dict(figures=str(figdir),scientific_stage_calls=0,missing=missing,images=sorted(actual),adopted_readonly=False,
+                C1_display=c1_display,C1_display_ADU=c1_display['limits_ADU'],C1_display_policy=c1_display,
+                C2_display_ADU=style.get('C2_display_ADU',[406,554]),C2_display=dict(mode='fixed',limits_ADU=style.get('C2_display_ADU',[406,554])))
     dump(out/'publication.json',result)
     if missing:raise FileNotFoundError('Incomplete pure publication: '+', '.join(missing))
     return StageResult(dict(directory=figdir,figures=figdir,metadata=out/'publication.json'),result)
@@ -209,6 +231,9 @@ def _four_frames(ctx,stats,figdir,pooled,c):
 
             for ax,title in zip(axes,('C1 + mask','C2 raw','C2 + TrackMate centers','C2 + refined centers / X,Y SE')):ax.set_title(title,fontsize=10)
             fig.suptitle(f"{ctx.sample_id} | original frame {frame} | {frame*c['frame_interval_s']:.2f} s | nominal SE; identity registration unverified")
-            _finish(fig,figdir/f'frame_{frame:04d}_four_panels.png')
+            display_footer=(f'C1 display {range1[0]:g}-{range1[1]:g} ADU; '
+                            f'C2 display {range2[0]:g}-{range2[1]:g} ADU. '
+                            'Fixed within this cell; display only.')
+            _finish(fig,figdir/f'frame_{frame:04d}_four_panels.png',display_footer)
 
 refresh=execute

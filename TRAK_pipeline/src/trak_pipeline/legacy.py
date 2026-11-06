@@ -88,8 +88,17 @@ def _frame_contract(mask, mapping_rows, shape, original_frames):
 class LegacyReader:
     def __init__(self, config):
         self.config = config
-        self.root = Path(config['data_root'])
-        self.control = Path(config.get('control_root', self.root / '_batch_pipeline'))
+        self.root = Path(config['data_root']).resolve()
+        self.execution_control = Path(config.get('control_root', self.root / '_batch_pipeline')).resolve()
+        # A new batch may own separate state while adopting the same committed
+        # legacy results. This explicit location is read-only; never guess roots
+        # or copy a completion registry that can silently become stale.
+        legacy_control = config.get('legacy_control_relative')
+        self.control = (self.root / legacy_control).resolve() if legacy_control else self.execution_control
+        if not self.control.is_relative_to(self.root):
+            raise ValueError('Legacy metadata root escapes the dataset')
+        if legacy_control and not self.control.is_dir():
+            raise FileNotFoundError('Explicit legacy metadata root is unavailable: ' + str(self.control))
         self.reports = {}
         self._locations = None
         self._registry_entries = {}
