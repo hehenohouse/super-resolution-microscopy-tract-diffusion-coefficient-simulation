@@ -4,6 +4,87 @@ This log separates production changes, reporting repairs and isolated experiment
 Historical dates describe recorded work, not new analysis during publication.
 The November 2 update prepares English source documentation for GitHub; scientific data remain on My Book.
 
+## 2026-11-13 — Miro1 mitochondrial mask parameters; Miro1 queue re-prepared (release 20261113T_pending_and_Halo_controls_v9_mask_params)
+
+Scientific change for Miro1 only. TRAK1, TRAK2 and HaloTag-only methods, parameters, cache identities and batches are unchanged (their manifests stay pinned to v8).
+
+### Cause
+
+In Miro1 test cells many thin, dim mitochondria visible in the 50-frame C1 mean were missing from the mask. They are lost because Nellie computes vesselness only where the Hessian (Frobenius) norm exceeds its automatic threshold divided by 2 at every filter scale; lowering the Frangi threshold or contrast-adjusting C1 did not recover them. After offline comparisons on WT_Miro1_BR1_T1 (support 10–40/50, controls and edge-distance checks), the lab chose: Hessian gate threshold ÷ 4, support ≥ 20 of 50 frames, and removal of mask pieces < 60 px.
+
+### Changed
+
+- `stages/mask.py`: the Nellie broad method accepts an optional parameter `frob_thresh_division` (default 2 = Nellie's own default). It is passed to `nellie.segmentation.filtering.Filter` and recorded in each chunk's `actual_parameters.json`. Configurations without the key keep their exact scientific identities and results (verified: a raw Miro1 chunk with the default reproduces the production chunk pixel for pixel).
+- `tools/prepare_dataset_batch.py`: new `--method-set STAGE.PARAMETER=JSON`, limited to `broad.frob_thresh_division`, `mask_threshold.minimum_support` and `mask_cleanup.min_foreground_pixels`. Every override is written to the manifest (`method_overrides`, `methods_digest`) and to `INPUT_INVENTORY.md`; all other settings must still match the production template.
+- Prepared `batches/20261113_Miro1` (102 cells, first-cell gate on) with `broad.frob_thresh_division 4`, `mask_threshold.minimum_support 10 -> 20`, `mask_cleanup.min_foreground_pixels 32 -> 60`, and `batches/20261113_Miro1_all`. The drive-root Miro1 launchers now point to `batches/20261113_Miro1_all`; `batches/20261111_Miro1(_all)` are superseded and kept unchanged.
+- Because only mask parameters changed, detection and fit identities are unchanged: cells whose detection/fit are already committed (6 Miro1 cells run on the Mac on 2026-11-13) reuse them; Nellie and every later stage are recomputed.
+
+### Verification
+
+- New tests (`test_mask_method_overrides.py`, 6): default and declared gate reach the native request and Nellie `Filter`, invalid gates stop before any native call, identity unchanged when the key is absent, mask-only `--method-set` parsing and rejection of other stages/invalid values. Full suite: 202 tests; the only failures are the 4 macOS `/var` temporary-symlink artifacts.
+- Real Nellie on WT_Miro1_BR1_T1 frames 1250–1274: gate ÷ 4 through the modified worker equals the earlier offline gate ÷ 4 run pixel for pixel; default gate equals the production chunk pixel for pixel.
+
+## 2026-11-11 — Queue for a new, independent target dataset; Miro1 prepared (release 20261111T_pending_and_Halo_controls_v8_dataset_queue)
+
+Batch control only. No scientific stage, parameter, cache identity or figure renderer changed.
+
+### Cause
+
+Miro1 raw data arrived in `Xinran_Miro1` (WT, TDK, MDK × BR1–BR3, 102 cells). The existing queues could not run it: `run_replica_extension_batch.py` accepts only TRAK1 then TRAK2 with new BR4/BR5 cells, and `run_control_batch.py` accepts only the HaloTag-only control.
+
+### Changed
+
+- New `tools/run_dataset_batch.py`: a pinned, resumable queue for one new target dataset in which every configured cell is new. Conditions and replicas are declared in the manifest and checked against the frozen inventory before any cell starts. It reuses the production `SharedBackend` and `execute_queue` of the BR4/BR5 queue unchanged (same runner, completion checks, locks, stop handling and summaries). TRAK1, TRAK2 and HaloTag-only are refused, so their queues cannot be bypassed. Summaries cover this dataset alone.
+- New `tools/prepare_dataset_batch.py`: builds the batch folder, configuration and source audit for such a dataset. It applies the same first-IFD TIFF header checks as `prepare_br45_batch.py` (2500×684×428, 20 ms, 117 nm, single-channel uint16, explicit ImageJ metadata) and requires exactly one C1, C2 and ROI per cell. Methods, acquisition, summary, execution, style and runtime settings are copied unchanged from the production TRAK1 BR4/BR5 configuration; the tool fails if any of them would change. It never reads pixels, renames inputs or starts a cell.
+- `tools/run_combined_analysis_batch.py`: accepts the job kind `dataset` and launches it with `run_dataset_batch.py` from the pinned release. Existing `replica_extension` and `control` jobs behave as before.
+- Prepared `batches/20261111_Miro1` (102 cells; first-cell completion gate on) and `batches/20261111_Miro1_all` (combined entry), with drive-root launchers `START_MIRO1_WINDOWS.cmd` and companions. See `docs/WINDOWS_MIRO1.md`.
+
+### Verification
+
+- Dry run on My Book: 102 Miro1 cells, 204 TIFF headers pass; WT 10/11/12, TDK 12/12/12, MDK 10/11/12 cells in BR1/BR2/BR3.
+- New tests (`test_dataset_batch.py`, 11): manifest independence and count rules, reserved dataset names, inventory/condition/replica mismatches, combined dispatch of `dataset` jobs from the pinned release, BR suffix and acquisition-date parsing. Full suite: 196 tests; the only failures are the 4 macOS `/var` temporary-symlink artifacts and the timing-sensitive Nellie chunk test, which passes 5/5 when run alone.
+
+## 2026-11-09 — Top-level overview pages follow the five-replica summary (release 20261109T_pending_and_Halo_controls_v7_overview)
+
+Publication only. No scientific stage, parameter, cache identity or figure renderer changed.
+
+### Cause
+
+After the batch completed, `INTRA_RESULTS.html`, `CELL_METRICS_RESULTS.html` and `CELL_METRICS_TABLES.html` at each data root still came from the older BR1–BR3 aggregators (2026-10-26 to 11-02). The modular summary never rewrote them. Their tables listed only BR1–BR3 (for TRAK1: 105 cells) and linked the superseded `intra_summary_v2_*` curves, while their embedded images had already been redrawn from the five-replica summary. The `overlay_manifest.json` files in `On_NotOn_Overlay` folders were also left over from the old renderer (BR1–BR3), and macOS `._*` files were listed as images in some `INDEX.html` pages.
+
+### Changed
+
+- New `stages/overview_pages.py`. After every summarize/refresh publication (`runner.summarize_dataset`, `runner.refresh_dataset`), the three pages are rebuilt from the committed modular summary manifest. They cover comparison, conditions, all BRs and every cell, show valid BRs per group and condition means (mean, SD, SEM, BRs, cells), and link the current `modular_summary_*` products. The older `intra_summary_v1/v2_*` and `cell_metrics_v1_*` folders are kept unchanged and named as superseded on each page.
+- In the summary figure folders, the same step removes macOS AppleDouble `._*` files and overlay manifests from a different summary, and drops `._*` entries from `INDEX.html`.
+- A failure while writing these pages is printed as `OVERVIEW_PAGES_FAILED` and returned in the report; it does not affect scientific products.
+- `summaries.py`, `intra_summary_plots.py` and `export_reader_tables.py` are unchanged, so the renderer signature is unchanged and no cell or group figure is re-rendered.
+
+### Verification
+
+- Real data on My Book (Mac): TRAK1 and TRAK2 pages list 19 summary groups each (comparison, 3 conditions, 15 BRs) and 186 / 181 cells; every condition shows 5/5 valid BRs; all 596 / 586 page links resolve. Removed 26 old overlay manifests and 22 `._*` files.
+- New tests (`test_overview_pages.py`): five-replica ordering and links, condition statistics, removal of stale overlay manifests and `._*` entries while keeping current files, missing manifest raises. 185 tests; the only failures are the 4 macOS `/var` temporary-symlink artifacts.
+
+## 2026-11-09 — Sub-pixel ImageJ ROIs are read (release 20261109T_pending_and_Halo_controls_v6_subpixelroi)
+
+The resumed batch finished on 2026-11-08 with 173 of 176 cells complete. The remaining three, `TDK_TRAK1_BR5_T11`, `TDK_TRAK1_BR5_T14` and `TDK_TRAK2_BR4_T4`, failed at the ROI step before any analysis, on every run, with `Subpixel ROI coordinates are not supported by this reader`.
+
+### Cause
+
+These ROI files were saved by ImageJ with sub-pixel coordinates (option bit 128). ImageJ does this, for example, for a freehand ROI drawn on a zoomed image. Such a file stores a rounded integer copy of the vertices followed by the absolute float vertices. The vendored TARDIS reader (`locbio.load_imagej_roi`) only accepts integer ROIs and rejects these files. All other ROIs in the queue are integer ROIs. In `TDK_TRAK2_BR4_T4` (`t4.roi`, freehand, 1071 vertices), 785 vertices lie on half pixels. The float and rounded polygons differ in 276 of about 44,000 ROI pixels, all on the edge.
+
+### Changed
+
+- `stages/localization.py`: new `load_roi_vertices`. Integer ROIs are passed to the unchanged TARDIS reader. Sub-pixel ROIs use ImageJ's float vertices, in the same coordinate convention as integer ROIs. Before using the float vertices, the reader checks that they agree with the file's integer copy within 1 pixel; otherwise it rejects the file as an unsupported layout. Only sub-pixel ROIs get the extra metadata field `roi_coordinate_precision: imagej_subpixel_float`.
+- The vendored TARDIS code, parameters, cache identities and queue membership are unchanged. Every later stage already used the float `vertices.npy`.
+
+### Verification
+
+- All 74 cached `roi_geometry` outputs of integer ROIs on My Book (TRAK2), recomputed with this release: `roi_mask.npy` and `vertices.npy` are byte-identical, and the metadata matches.
+- The three failing ROIs now read and pass the float/integer layout check: `TDK_TRAK2_BR4_T4` (1071 vertices, 44,140 ROI pixels), `TDK_TRAK1_BR5_T11` (738 vertices, 51,830 pixels), `TDK_TRAK1_BR5_T14` (635 vertices, 44,532 pixels).
+- New tests (`test_roi_subpixel_reader.py`): an integer ROI gives the TARDIS reader's vertices and the previous metadata; a sub-pixel ROI gives the float vertices and the matching mask; a float/integer mismatch, a truncated file and an unsupported ROI type are rejected. 182 tests; the only failures are the 4 macOS `/var` temporary-symlink artifacts.
+- Read-only plan: 176 queued, 173 complete, 3 pending (these three cells), no scientific stage calls. `TDK_TRAK2_BR4_T4` reuses its cached detection and Nellie outputs. Native Windows execution is not yet verified.
+- Windows timing of the v5 run (2026-11-06 to 11-08): median 20.0 minutes per BR4/BR5 cell (10th–90th percentile 12.9–36.7; 101 cells), down from about 61; HaloTag-only cells 17.4 minutes.
+
 ## 2026-11-06 — Assignment selection check uses the fit ROI polygon (release 20261106T_pending_and_Halo_controls_v5_roicheck)
 
 Fixes the only scientific cell failure in the pending batch so far: `WT_TRAK1_BR5_T5` stopped in assignment on 2026-11-05 with `Selected refined center lies outside supplied ROI`.

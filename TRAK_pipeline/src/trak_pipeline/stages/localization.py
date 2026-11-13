@@ -13,11 +13,37 @@ def _csv(table,path):
     try:table.to_csv(temp,index=False,compression={'method':'gzip','mtime':0}if str(path).endswith('.gz')else None);replace(temp,path)
     finally:temp.unlink(missing_ok=True)
 
+IMAGEJ_SUBPIXEL_OPTION=128
+
+def load_roi_vertices(path,integer_reader):
+    """Return (N-by-2 x,y vertices in original-image pixels, coordinate precision).
+
+    Integer ImageJ ROIs are read by the vendored TARDIS reader, unchanged. A sub-pixel ROI
+    (ImageJ option bit 128, written e.g. for a freehand selection drawn on a zoomed image)
+    stores a rounded integer copy followed by the absolute float vertices; the float vertices
+    are the selection ImageJ itself uses, so they are returned here. The integer copy is only
+    used as a layout check.
+    """
+    import numpy as np,struct
+    raw=Path(path).read_bytes()
+    if len(raw)<64 or raw[:4]!=b'Iout' or not struct.unpack_from('>H',raw,50)[0]&IMAGEJ_SUBPIXEL_OPTION:
+        return np.asarray(integer_reader(path),dtype=float),'integer'
+    if raw[6]not in(0,7,8):raise ValueError('Only polygon, freehand, and traced area ROIs are supported')
+    top,left=struct.unpack_from('>2H',raw,8);count=struct.unpack_from('>H',raw,16)[0]
+    if count<3 or len(raw)<64+12*count:raise ValueError('Truncated sub-pixel ROI or fewer than three polygon vertices')
+    xi=np.frombuffer(raw,dtype='>u2',count=count,offset=64).astype(float)+left
+    yi=np.frombuffer(raw,dtype='>u2',count=count,offset=64+2*count).astype(float)+top
+    x=np.frombuffer(raw,dtype='>f4',count=count,offset=64+4*count).astype(float)
+    y=np.frombuffer(raw,dtype='>f4',count=count,offset=64+8*count).astype(float)
+    if not(np.isfinite(x).all()and np.isfinite(y).all()):raise ValueError('Non-finite sub-pixel ROI coordinates')
+    if max(np.abs(x-xi).max(),np.abs(y-yi).max())>1:raise ValueError('Sub-pixel ROI float coordinates disagree with its integer coordinates; unsupported layout')
+    return np.column_stack((x,y)),'imagej_subpixel_float'
+
 def execute_roi_geometry(ctx):
     import numpy as np
     paths('TARDIS/path_irrelevant_python/tardis_tau1')
     from locbio import load_imagej_roi,points_in_polygon
-    vertices=np.asarray(load_imagej_roi(ctx.sample.ROI_file),dtype=float)
+    vertices,precision=load_roi_vertices(ctx.sample.ROI_file,load_imagej_roi)
     h,w=ctx.config['acquisition']['shape'][1:]
     if vertices.ndim!=2 or vertices.shape[1]!=2 or len(vertices)<3 or not np.isfinite(vertices).all():raise ValueError('Invalid ROI vertices')
     if not((vertices[:,0]>=0)&(vertices[:,0]<w)&(vertices[:,1]>=0)&(vertices[:,1]<h)).all():raise ValueError('ROI vertices outside original image')
@@ -25,7 +51,9 @@ def execute_roi_geometry(ctx):
     ctx.output_dir.mkdir(parents=True,exist_ok=True)
     np.save(ctx.output_dir/'roi_mask.npy',mask);np.save(ctx.output_dir/'vertices.npy',vertices)
     crop=[max(0,int(np.floor(vertices[:,0].min()))-10),max(0,int(np.floor(vertices[:,1].min()))-10),min(w,int(np.ceil(vertices[:,0].max()))+11),min(h,int(np.ceil(vertices[:,1].max()))+11)]
-    return StageResult(dict(mask=ctx.output_dir/'roi_mask.npy',vertices=ctx.output_dir/'vertices.npy',roi_file=ctx.sample.ROI_file),dict(vertices=len(vertices),pixels=int(mask.sum()),crop_xyxy_px=crop,coordinate_system='original_image_integer_pixel_centers'))
+    metadata=dict(vertices=len(vertices),pixels=int(mask.sum()),crop_xyxy_px=crop,coordinate_system='original_image_integer_pixel_centers')
+    if precision!='integer':metadata['roi_coordinate_precision']=precision  # integer ROIs keep their previous metadata exactly
+    return StageResult(dict(mask=ctx.output_dir/'roi_mask.npy',vertices=ctx.output_dir/'vertices.npy',roi_file=ctx.sample.ROI_file),metadata)
 
 def validate_detection_settings(settings):
     if settings.get('subpixel_localization',True)is not True:raise ValueError('TrackMate v1 requires subpixel_localization=True; a different implementation/version is required')

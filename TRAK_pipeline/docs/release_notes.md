@@ -1,8 +1,18 @@
-# Execution speedups v2–v4 and assignment ROI check v5 — 2026-11-06
+# Miro1 mask parameters v9 (2026-11-13)
 
-The pending Windows batch (`batches/20261104_all_pending`, together with its
-BR4/BR5 and HaloTag-only child queues) is pinned to
-`releases/20261106T_pending_and_Halo_controls_v5_roicheck`. Its predecessors are `..._v4_cleanexit`,
+`releases/20261113T_pending_and_Halo_controls_v9_mask_params` adds an optional Nellie
+Hessian gate parameter (`broad.frob_thresh_division`, default 2) and mask-only
+`--method-set` overrides in `tools/prepare_dataset_batch.py`. The Miro1 queue
+(`batches/20261113_Miro1_all`, 102 cells) uses gate ÷ 4, support ≥ 20/50 and mask pieces
+≥ 60 px. TRAK1/TRAK2/HaloTag-only batches stay pinned to v8; their methods and identities
+are unchanged. Detection and fit of already computed Miro1 cells are reused; Nellie and
+later stages are recomputed. See `CHANGELOG.md`.
+
+# Execution speedups v2–v4, assignment ROI check v5 (2026-11-06), sub-pixel ROI reader v6, overview pages v7 (2026-11-09) and dataset queue v8 (2026-11-11)
+
+The TRAK/HaloTag Windows batches (`batches/20261104_all_pending`, together with its
+BR4/BR5 and HaloTag-only child queues) are pinned to
+`releases/20261111T_pending_and_Halo_controls_v8_dataset_queue`; the Miro1 batch moved to v9 (above). Its predecessors are `..._v7_overview`, `..._v6_subpixelroi`, `..._v5_roicheck`, `..._v4_cleanexit`,
 `..._v3_nellie`, `..._v2_fastfit` and `..._v1`.
 
 - v2 changes fit scheduling. Each frame is one worker task, two 25-frame chunks
@@ -18,11 +28,29 @@ BR4/BR5 and HaloTag-only child queues) is pinned to
   centers against the same ROI polygon that fit QC used, not the pixel-center
   raster. The mismatch had stopped `WT_TRAK1_BR5_T5` (one boundary point in
   frame 0). Labels of completed cells are unchanged.
+- v6 reads ImageJ ROIs saved with sub-pixel coordinates (ImageJ option bit 128,
+  e.g. a freehand ROI drawn on a zoomed image) from the float vertices ImageJ
+  stores. The vendored TARDIS reader rejects these files, which stopped
+  `TDK_TRAK1_BR5_T11`, `TDK_TRAK1_BR5_T14` and `TDK_TRAK2_BR4_T4` before any
+  analysis. Integer ROIs still go through the unchanged TARDIS reader.
+- v7 rebuilds the top-level reader pages (`INTRA_RESULTS.html`,
+  `CELL_METRICS_RESULTS.html`, `CELL_METRICS_TABLES.html`) from the
+  five-replica summary after every summarize or refresh, and removes stale
+  BR1–BR3 overlay manifests and macOS `._*` files from summary figure folders.
+  No figure is re-rendered and no science runs.
+- v8 adds a queue for a new, independent target dataset in which every cell is
+  new (`tools/run_dataset_batch.py`, job kind `dataset`) and its preparation tool
+  (`tools/prepare_dataset_batch.py`). Miro1 (102 cells, WT/TDK/MDK × BR1–BR3) is
+  the first such dataset. Scientific methods are copied unchanged from the
+  TRAK1 BR4/BR5 configuration; existing TRAK and HaloTag-only batches behave as
+  before.
 
 Scientific methods, parameters, cache identities, queue membership and
 HaloTag-only separation are unchanged. Completed cells and checkpoints are
-reused. Before these releases, a Windows cell took about 61 minutes; the
-estimate is now about 20 minutes, which has not yet been measured on Windows.
+reused. Before these releases, a Windows cell took about 61 minutes. Measured
+on Windows from 2026-11-06 to 11-08, the median is 20.0 minutes per BR4/BR5 cell
+(10th–90th percentile 12.9–36.7 minutes; 101 cells) and 17.4 minutes per
+HaloTag-only cell.
 Mac same-machine parity was byte-identical for decompressed fit tables and for
 Nellie masks, thresholds and indexes. The suite of 171 tests keeps 9
 pre-existing Mac-environment failures: 5 need the cleanup environment's

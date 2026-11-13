@@ -4,9 +4,32 @@ One shared, frozen implementation serves TRAK1, TRAK2, Mac and Windows. Dataset 
 
 This package does not start a batch when installed. It uses the four existing Python environments and the existing Fiji/Java installation; it installs no dependencies and performs no Mac/Windows numerical or pixel replay.
 
+## Miro1 mask parameters — 2026-11-13
+
+Miro1 uses its own mitochondrial-mask parameters (TRAK1, TRAK2 and HaloTag-only are unchanged): Nellie Hessian gate threshold ÷ 4 (`broad.frob_thresh_division`, default 2), support ≥ 20 of 50 frames (`mask_threshold.minimum_support`, default 10) and removal of mask pieces < 60 px (`mask_cleanup.min_foreground_pixels`, default 32). The queue was prepared with
+
+```
+python tools/prepare_dataset_batch.py --molecule Miro1 --dataset-dir Xinran_Miro1 --replicas BR1 BR2 BR3 --batch-id 20261113_Miro1 --expected-cells 102 \
+  --method-set broad.frob_thresh_division=4 --method-set mask_threshold.minimum_support=20 --method-set mask_cleanup.min_foreground_pixels=60 \
+  --release-relative releases/20261113T_pending_and_Halo_controls_v9_mask_params --write
+```
+
+Only these three mask parameters can be set this way; each override is recorded in the batch manifest. Windows: `START_MIRO1_WINDOWS.cmd` (now `batches/20261113_Miro1_all`); see `docs/WINDOWS_MIRO1.md`.
+
+## New target dataset queue (Miro1) — 2026-11-11
+
+A new protein whose cells are all new runs in its own `dataset` queue, separate from TRAK1, TRAK2 and HaloTag-only. Prepare it read-only first, then write the batch once a release is frozen:
+
+```
+python tools/prepare_dataset_batch.py --molecule Miro1 --dataset-dir Xinran_Miro1 --replicas BR1 BR2 BR3 --batch-id 20261111_Miro1 --expected-cells 102
+python tools/prepare_dataset_batch.py ... --release-relative releases/<frozen release> --write
+```
+
+The data folder sits next to `_TRAK_pipeline` and holds `<condition>/<anything>_BR<n>/<MMDDYY>_..._T<n>f/` with one `C1-*.tif(f)`, one `C2-*.tif(f)` and one `.roi` per cell. The BR number comes from the replica folder suffix; the acquisition date from the first six characters of the cell folder. Scientific methods and runtime settings are copied unchanged from the production TRAK1 BR4/BR5 configuration. The first queued cell must finish science and figures before the rest of the queue continues. Windows: `START_MIRO1_WINDOWS.cmd` at the drive root; details in `docs/WINDOWS_MIRO1.md`.
+
 ## Speed settings — 2026-11-06
 
-The pending Windows batch is pinned to `releases/20261106T_pending_and_Halo_controls_v5_roicheck`. It builds on `..._v2_fastfit` (faster fit and detection), `..._v3_nellie` (concurrent Nellie) and `..._v4_cleanexit` (running fit workers and Nellie chunks stop promptly when a stage fails). v5 also fixes an assignment self-check that used the pixel ROI instead of the fit's ROI polygon and stopped `WT_TRAK1_BR5_T5`; see `CHANGELOG.md`. These releases only change how work is scheduled and stopped. Every scientific method, parameter and cache identity is unchanged, so completed cells and committed checkpoints are reused.
+The pending Windows batch is pinned to `releases/20261109T_pending_and_Halo_controls_v7_overview`. It builds on `..._v2_fastfit` (faster fit and detection), `..._v3_nellie` (concurrent Nellie) and `..._v4_cleanexit` (running fit workers and Nellie chunks stop promptly when a stage fails). v5 also fixes an assignment self-check that used the pixel ROI instead of the fit's ROI polygon and stopped `WT_TRAK1_BR5_T5`. v6 reads ImageJ ROIs saved with sub-pixel coordinates, which had stopped `TDK_TRAK1_BR5_T11`, `TDK_TRAK1_BR5_T14` and `TDK_TRAK2_BR4_T4` before any analysis. v7 rebuilds the top-level `INTRA_RESULTS.html`, `CELL_METRICS_RESULTS.html` and `CELL_METRICS_TABLES.html` from the five-replica summary after every summarize or refresh; see `CHANGELOG.md`. These releases only change how work is scheduled and stopped. Every scientific method, parameter and cache identity is unchanged, so completed cells and committed checkpoints are reused.
 
 Before this change, a Windows cell took about 61 minutes. Fit took about 43 of them, with 4 workers and a per-frame wait. Single-process Nellie (about 23 minutes) was hidden behind fit, and TrackMate used 2 threads with a JVM restart every 250 frames. The expected time is now about 20 minutes per cell. That figure is estimated, not yet measured on Windows.
 
@@ -243,7 +266,7 @@ correction; the targeted command does not itself activate a release.
 
 ## New proteins
 
-Copy `configs/OTHER_PROTEIN.example.json` to a new named configuration and provide its data root, molecule/sample identity, channels, acquisition metadata, sample discovery/inventory and existing runtime profiles. Keep detection, fitting, mask and TARDIS parameters explicit. Run `plan` before any new computation. A different mask method can replace the mask producer while retaining its coordinate/time contract; it does not require rewriting localization or presentation.
+For a dataset laid out like TRAK1/TRAK2/Miro1, use `tools/prepare_dataset_batch.py` (section "New target dataset queue" above); it builds the inventory and configuration for you. Otherwise, copy `configs/OTHER_PROTEIN.example.json` to a new named configuration and provide its data root, molecule/sample identity, channels, acquisition metadata, sample discovery/inventory and existing runtime profiles. Keep detection, fitting, mask and TARDIS parameters explicit. Run `plan` before any new computation. A different mask method can replace the mask producer while retaining its coordinate/time contract; it does not require rewriting localization or presentation.
 
 The example has an empty sample list and no runtime profile deliberately. Complete those fields before using it. No new environment is created automatically.
 

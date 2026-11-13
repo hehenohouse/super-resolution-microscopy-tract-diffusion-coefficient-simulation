@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""One Windows entry point for pending BR4/BR5 cells, then HaloTag-only controls.
+"""One Windows entry point for pending queues: BR4/BR5 extensions, HaloTag-only controls
+and new independent target datasets (kind "dataset", e.g. Miro1).
 
 Each child retains its own queue state, completion reports, locks and summaries.
 This controller contains no scientific algorithms and never pools controls with
@@ -24,6 +25,14 @@ def sibling(name):
 
 
 extension=sibling('run_replica_extension_batch')
+CHILD_KINDS=('replica_extension','control','dataset')
+
+
+def child_backend(job,common,cm):
+    if job['kind']=='replica_extension':return extension.SharedBackend(common,cm)
+    if job['kind']=='control':return sibling('run_control_batch').ControlBackend(common,cm)
+    if job['kind']=='dataset':return sibling('run_dataset_batch').DatasetBackend(common,cm)
+    raise ValueError('Unknown child queue type')
 
 
 def manifest_paths(path,require_ready=True):
@@ -36,7 +45,7 @@ def manifest_paths(path,require_ready=True):
     if not jobs or len({j['job_id'] for j in jobs})!=len(jobs):raise ValueError('Combined job identities must be unique')
     seen=set()
     for job in jobs:
-        if job.get('kind') not in ('replica_extension','control'):raise ValueError('Unknown child queue type')
+        if job.get('kind') not in CHILD_KINDS:raise ValueError('Unknown child queue type')
         child=(common/job['manifest_relative']).resolve()
         if not child.is_relative_to(common/'batches') or not child.is_file() or child==path:raise ValueError('Missing, recursive or out-of-package child manifest')
         child_manifest=extension.read(child)
@@ -89,7 +98,7 @@ def collect_plan(manifest,common,batch):
     plans=[]
     for job in manifest['jobs']:
         child_path=common/job['manifest_relative'];cm=extension.read(child_path)
-        backend=extension.SharedBackend(common,cm) if job['kind']=='replica_extension' else sibling('run_control_batch').ControlBackend(common,cm)
+        backend=child_backend(job,common,cm)
         datasets=backend.load_datasets();state_path=child_path.parent/'state/batch_state.json'
         state=extension.read(state_path) if state_path.is_file() else extension.new_state(cm,datasets,backend)
         completed=[]
@@ -116,7 +125,9 @@ def child_command(release,job,common,action):
         # receives its original manifest and state path without translation.
         return [sys.executable,'-B','-s','-u',str(release/'tools/run_combined_analysis_batch.py'),
             '--child-kind','replica_extension','--manifest',str(common/job['manifest_relative']),'--action',action]
-    return [sys.executable,'-B','-s','-u',str(release/'tools/run_control_batch.py'),
+    tool={'control':'run_control_batch.py','dataset':'run_dataset_batch.py'}.get(job['kind'])
+    if tool is None:raise ValueError('Unknown child queue type')
+    return [sys.executable,'-B','-s','-u',str(release/'tools'/tool),
         '--manifest',str(common/job['manifest_relative']),'--action',action]
 
 

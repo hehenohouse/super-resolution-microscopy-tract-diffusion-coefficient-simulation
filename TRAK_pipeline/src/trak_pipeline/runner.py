@@ -204,6 +204,14 @@ def _summary_records(config,samples):
         else:missing.append(dict(sample_id=sample.sample_id,missing=[k for k in('fit','assignment','mask_cleanup','mask_roi','decomposition')if k not in artifacts]))
     return records,missing
 
+def _overview_pages(config,manifest=None):
+    """Reader overview pages from the committed summary; a page failure is reported, never hidden, and never touches science."""
+    from .stages.overview_pages import write_overview_pages
+    try:return write_overview_pages(config,manifest)
+    except Exception as error:
+        print('OVERVIEW_PAGES_FAILED '+type(error).__name__+': '+str(error),flush=True)
+        return dict(error=type(error).__name__+': '+str(error))
+
 def summarize_dataset(config,samples,publish=True):
     from .stages import summaries
     records,missing=_summary_records(config,samples)
@@ -212,8 +220,11 @@ def summarize_dataset(config,samples,publish=True):
     result=summaries.summarize(summary_config,records)
     calls=0 if isinstance(result,dict)and result.get('reused')else 1
     if calls:_event(config,dict(event='scientific_stage_call',stage='hierarchy_summary',completed_cells=len(records)))
-    if publish:summaries.refresh(config,result.get('manifest_path',result.get('manifest'))if isinstance(result,dict)else result)
-    return dict(result=result,missing=missing,completed_cells=len(records),scientific_stage_calls=calls)
+    overview=None
+    if publish:
+        manifest=result.get('manifest_path',result.get('manifest'))if isinstance(result,dict)else result
+        summaries.refresh(config,manifest);overview=_overview_pages(config,manifest)
+    return dict(result=result,missing=missing,completed_cells=len(records),scientific_stage_calls=calls,overview=overview)
 
 
 def refresh_dataset(config,samples):
@@ -232,7 +243,7 @@ def refresh_dataset(config,samples):
             report['cells'].append(dict(sample_id=sample.sample_id,status='published',figures=result.files))
         except Exception as e:report['missing_scientific_artifacts'].append(dict(sample_id=sample.sample_id,error=str(e)))
     from .stages import summaries
-    try:report['hierarchy']=summaries.refresh(config)
+    try:report['hierarchy']=summaries.refresh(config);report['overview']=_overview_pages(config)
     except FileNotFoundError as e:report['missing_scientific_artifacts'].append(dict(stage='hierarchy_summary',error=str(e)))
     report['complete']=not report['missing_scientific_artifacts'];atomic_json(_state(config)/'last_refresh.json',report,config['data_root'])
     return report

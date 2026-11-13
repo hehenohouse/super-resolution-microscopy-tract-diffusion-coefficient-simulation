@@ -257,7 +257,11 @@ def _native_worker(request_path):
     im=ImInfo(fi); n=len(request['frame_ids'])
     if tuple(im.shape)!=(n,*request['shape_yx']) or not im.no_z: raise ValueError('Native input grid differs from request')
     lo,hi=request['filter_radii_um']
-    filt=Filter(im,num_t=n,min_radius_um=lo,max_radius_um=hi,remove_edges=False,device='cpu');filt.run()
+    # Hessian (Frobenius) gate: Nellie computes vesselness only where the Frobenius norm
+    # exceeds threshold/division at every scale. Nellie's own default (2) is used unless
+    # the method explicitly declares another division.
+    frob_division=float(request.get('frob_thresh_division',2))
+    filt=Filter(im,num_t=n,min_radius_um=lo,max_radius_um=hi,remove_edges=False,device='cpu',frob_thresh_division=frob_division);filt.run()
     lab=Label(im,num_t=n,min_radius_um=request['pixel_size_nm']/1000,otsu_thresh_intensity=False,device='cpu')
     thresholds=[]; original=lab._compute_frame_thresholds
     def record(a,b):
@@ -271,7 +275,7 @@ def _native_worker(request_path):
     _array(request['output'],masks)
     _json(work/'thresholds.json',thresholds)
     _json(work/'actual_parameters.json',dict(nellie_version=importlib.metadata.version('nellie'),
-        sigmas_pixels=[float(v) for v in filt.sigmas],native_min_area=int(lab.min_area_pixels),
+        sigmas_pixels=[float(v) for v in filt.sigmas],native_min_area=int(lab.min_area_pixels),frob_thresh_division=frob_division,
         filter_radii_um=request['filter_radii_um'],pixel_size_nm=request['pixel_size_nm'],frame_interval_s=request['frame_interval_s']))
 
 
@@ -296,6 +300,9 @@ def execute_broad(ctx):
     if chunk<=0: raise ValueError('chunk_frames must be positive')
     radii=[float(x) for x in p['filter_radii_um']]
     if len(radii)!=2 or not 0<radii[0]<=radii[1]: raise ValueError('Invalid Nellie filtering radii')
+    # Optional method parameter. Absent = Nellie default 2, so existing method identities are unchanged.
+    frob_division=float(p.get('frob_thresh_division',2))
+    if not (0<frob_division<float('inf')): raise ValueError('frob_thresh_division must be a positive finite number')
     c1=_input(ctx,'C1','c1'); source=_file(c1,'image','tiff')
     executable=ctx.runtime.get('nellie_python',ctx.config.get('runtime',{}).get('nellie_python'))
     if not executable: raise ValueError('Explicit existing Nellie Python executable is required')
@@ -393,7 +400,8 @@ def execute_broad(ctx):
                                 if f in sample_frames:
                                     np.testing.assert_array_equal(own.pages[i].asarray(),raw[i]);sampled.append(f)
                     request=dict(work=str(work),input=str(input_tif),output=str(work/'broad_mask.npy'),frame_ids=ids,
-                        shape_yx=list(shape),pixel_size_nm=scale,frame_interval_s=dt,filter_radii_um=radii,nellie_version=p['nellie_version'])
+                        shape_yx=list(shape),pixel_size_nm=scale,frame_interval_s=dt,filter_radii_um=radii,nellie_version=p['nellie_version'],
+                        frob_thresh_division=frob_division)
                     req=work/'request.json';_json(req,request)
                     native_log=out/(tag+'_nellie.log')
                     pending.append(dict(start=start,ids=ids,tag=tag,dest=dest,complete=complete,work=work,native_log=native_log,
