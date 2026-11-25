@@ -13,7 +13,7 @@ from ..io import atomic_bytes,read_json,utc
 LEVEL_ORDER={'comparison':0,'condition':1,'BR':2,'cell':3}
 CONDITION_ORDER={'WT':0,'TDK':1,'MDK':2}
 FIGURE_DIRS=('Analysis_Figures_Intra','Analysis_Figures_Intra/On_NotOn_Overlay','Analysis_Figures_Cell_Metrics')
-METRIC_LABELS={'on_percentage':'On percentage (%)','first_mask_ROI_area_um2':'First-mask ROI area (µm²)','mean_ROI_area_um2':'Mean ROI area (µm²)'}
+METRIC_LABELS={'on_percentage':'On percentage (%)','first_mask_ROI_area_um2':'First-mask ROI area (µm²)','mean_ROI_area_um2':'Mean ROI area (µm²)','first_mask_ROI_area_per_cell_um2':'First-mask ROI area per cell (µm², ÷ manual cells in ROI)','mean_ROI_area_per_cell_um2':'Mean ROI area per cell (µm², ÷ manual cells in ROI)','localizations_per_cell':'Localizations per cell (÷ manual cells in ROI)'}
 STYLE=('body{font:16px system-ui;margin:28px;color:#203746;max-width:1200px}table{border-collapse:collapse;margin:12px 0 24px}'
        'td,th{padding:8px 14px;border-bottom:1px solid #ccd5df;text-align:left;vertical-align:top}th{background:#f2f5f8}'
        'img{max-width:100%;height:auto;margin:8px 0}a{color:#165d96}.note{color:#52606d;font-size:14px}nav a{margin-right:18px}')

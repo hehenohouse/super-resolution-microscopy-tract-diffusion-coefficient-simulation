@@ -132,10 +132,19 @@ def _worksheet(archive, part, spec, replacement):
     header = rows[6]
     header_styles = {cell.get('r').rstrip('0123456789'): cell.get('s') for cell in header}
     for child in list(header): header.remove(child)
+    fallback_header = next((header_styles[k] for k in sorted(header_styles, key=lambda c: (len(c), c), reverse=True) if header_styles[k]), None)
     for index, value in enumerate(spec['headers'], 1):
-        col = _column(index); header.append(_cell(col + '6', value, 'text', header_styles.get(col)))
+        col = _column(index); header.append(_cell(col + '6', value, 'text', header_styles.get(col, fallback_header)))
     style_rows = [rows[7], rows.get(8, rows[7])]
     styles = [{cell.get('r').rstrip('0123456789'): cell.get('s') for cell in row} for row in style_rows]
+    # Columns beyond the template width reuse the style of a template column of the same type
+    # (so decimals and percentages keep their number formats).
+    for style in styles:
+        for index, kind in enumerate(spec['column_types'], 1):
+            col = _column(index)
+            if col in style: continue
+            same = next((_column(j) for j, other in enumerate(spec['column_types'], 1) if other == kind and _column(j) in style), None)
+            if same is not None: style[col] = style[same]
     attributes = [dict(row.attrib) for row in style_rows]
     for row in list(data):
         if int(row.get('r')) >= 7: data.remove(row)
@@ -161,7 +170,13 @@ def _worksheet(archive, part, spec, replacement):
                 autofilter = table.find(q('autoFilter'))
                 if autofilter is not None: autofilter.set('ref', table.get('ref'))
                 cols = table.find(q('tableColumns'))
-                if cols is None or len(cols) != ncols: raise ValueError('Template table/header width mismatch')
+                if cols is None: raise ValueError('Template table has no columns')
+                if len(cols) != ncols:  # widen/narrow the table to the sheet's columns; ids stay unique
+                    proto = cols[0]
+                    for child in list(cols): cols.remove(child)
+                    for index in range(1, ncols + 1):
+                        column = ET.SubElement(cols, proto.tag); column.set('id', str(index))
+                    cols.set('count', str(ncols))
                 for column, text in zip(cols, spec['headers']): column.set('name', str(text))
                 replacement[tablepart] = ET.tostring(table, encoding='utf-8', xml_declaration=True)
     return root

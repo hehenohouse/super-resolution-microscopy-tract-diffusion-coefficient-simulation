@@ -9,6 +9,10 @@ _CHILDREN = {}
 _CHILD_LOCK = threading.RLock()
 _CANCELLED = threading.Event()
 
+
+class StageStalled(RuntimeError):
+    """A child stage produced no log output for longer than its stall timeout; its process tree was terminated."""
+
 def reset_cancellation():
     with _CHILD_LOCK:
         if _CHILDREN:raise RuntimeError('Cannot reset cancellation while child stages are active')
@@ -90,7 +94,9 @@ def batch_lock(config,kind='run'):
         if record.is_file()and read_json(record).get('token')==token:
             record.unlink();path.rmdir()
 
-def invoke(config,command,log_path,cwd=None):
+def invoke(config,command,log_path,cwd=None,stall_timeout_s=None):
+    """Run one owned child stage. stall_timeout_s: if the child's log gains no output for that long, the child
+    tree is terminated and StageStalled is raised (None = wait indefinitely, the previous behaviour)."""
     configure(config);root=Path(config['data_root']);log_path=guard(log_path,root);log_path.parent.mkdir(parents=True,exist_ok=True)
     print('COMMAND_STAGE '+json.dumps(command),flush=True)
     env=dict(os.environ)
@@ -101,8 +107,12 @@ def invoke(config,command,log_path,cwd=None):
             _CHILDREN[id(process)]=process
         try:
             with log_path.open(encoding='utf-8',errors='replace')as reader:
+                last_output=time.monotonic()
                 while process.poll()is None:
-                    for line in reader:print(line,end='',flush=True)
+                    for line in reader:print(line,end='',flush=True);last_output=time.monotonic()
+                    if stall_timeout_s is not None and time.monotonic()-last_output>stall_timeout_s:
+                        print(f'STAGE_STALLED no output for {stall_timeout_s:.0f} s; terminating the child process tree',flush=True)
+                        raise StageStalled(f'No output for {stall_timeout_s:.0f} s from '+str(log_path))
                     time.sleep(.2)
                 for line in reader:print(line,end='',flush=True)
             code=process.wait()

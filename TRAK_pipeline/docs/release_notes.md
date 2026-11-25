@@ -1,3 +1,72 @@
+# Summary every 10 cells v19 (2026-11-25)
+
+`releases/20261125T_pending_and_Halo_controls_v19_summary_every_10` = v18 with queue summaries refreshed every 10 completed cells
+(`TRAK_SUMMARY_EVERY_CELLS`), after the first cell, on a stop request and after each dataset's last cell, instead
+of after every cell. Orchestration only. See `CHANGELOG.md`.
+
+# Summary code signature v18 (2026-11-23)
+
+`releases/20261123T_pending_and_Halo_controls_v18_summary_code_signature` = v17 plus the summary code digest in the summary input signature, so a
+summary made by older summary code is rewritten rather than reused. Reporting only. See `CHANGELOG.md`.
+
+# Partial cells v17 (2026-11-23)
+
+`releases/20261123T_pending_and_Halo_controls_v17_partial_cells` = v16 with per-cell values divided by ceil(cells in ROI): a partial cell counts as
+one (0.5 → 1, 1.5 → 2), because a cell cut by the ROI keeps most of its mitochondria inside and ÷0.5 doubled it.
+Cell sheets show "Cells used for per-cell values". Reporting only. See `CHANGELOG.md`.
+
+# Cell counts v16 (2026-11-23)
+
+`releases/20261123T_pending_and_Halo_controls_v16_cell_counts` = v15 plus manual cells-in-ROI counts in the summaries: `annotations/cell_counts.csv`
+(shared, outside releases) adds "Cells in ROI" and per-cell values (ROI mitochondrial mask area and total
+localizations ÷ cells in ROI) to `cell_metrics.csv`, the BR/condition statistics and `Cell_Metrics.xlsx`.
+Reporting only; ROI-level values, cell stages and cache identities are unchanged. Pinned by the current queue
+and the completed Miro1, HaloTag-only (Miro1 mask) and TRAK2-TRAK1OE batches. See `CHANGELOG.md`.
+
+# Detection watchdog v15 (2026-11-23)
+
+`releases/20261123T_pending_and_Halo_controls_v15_detection_watchdog` = v14 plus a stall watchdog for the bounded TrackMate JVMs: no log output for 900 s
+(`TRAK_DETECTION_STALL_S`) terminates the JVM tree and retries the range (committed chunks reused), at most
+3 attempts, after which only that cell fails. Execution only; scientific identities and results are unchanged.
+Pinned by `batches/20261120_TDKctrl_Miro2_then_TRAK_all`. See `CHANGELOG.md`.
+
+# Miro2 and TDK control v14 (2026-11-20)
+
+`releases/20261120T_pending_and_Halo_controls_v14_miro2_tdkctrl` = v13 plus `prepare_dataset_batch.py --condition-from-folder` (condition named in each flat BR
+folder, e.g. Xinran_Miro2) and two tests (folder-named conditions; single-BR dataset summary). Scientific
+source is identical to v13. Used by `batches/20261120_TDKctrl_Miro2_then_TRAK_all` (TDK HaloTag-only
+control, Miro2, then the TRAK rerun). See `CHANGELOG.md`.
+
+# Flat dataset folders v13 (2026-11-18)
+
+`releases/20261118T_pending_and_Halo_controls_v13_flat_dataset` = v12 plus batch-preparation options in `tools/prepare_dataset_batch.py`: `--flat`
+(BR folders directly in the dataset folder, one declared condition), `YYYYMMDD_` cell-folder dates and
+`--exclude-cell SAMPLE_ID=reason` (recorded, not queued). Scientific source is identical to v12. Used by
+`batches/20261118_TRAK2-TRAK1OE_all` (TRAK2 in TDK cells with TRAK1 overexpression, Miro1 mask).
+The TRAK rerun stays on v12. See `CHANGELOG.md`.
+
+# Rerun resume fix v12 (2026-11-18)
+
+`releases/20261118T_pending_and_Halo_controls_v12_rerun_resume` = v11 plus a batch-control fix: completed BR1–BR3 cells of a full rerun, whose detection,
+fit and c1_mean are legacy-adapted saved files, are recognized as complete on resume and in the queue
+plan (their recorded files must exist). Used by `batches/20261116_TRAK_Miro1mask_all`; v11 was never run.
+
+# Rerun summary fix v11 (2026-11-18)
+
+`releases/20261118T_pending_and_Halo_controls_v11_rerun_summary` changes the five-replica summary only: for BR1–BR3 cells whose assignment and masks were
+recomputed (full rerun with new mask parameters), the old saved `classification_summary.json` and
+`masks/per_block_statistics.csv` are no longer used as a source or cross-check, because they describe
+the old mask. Legacy-adapted cells are checked as before. Used by `batches/20261116_TRAK_Miro1mask_all`
+only. See `CHANGELOG.md`.
+
+# Full TRAK rerun v10 (2026-11-16)
+
+`releases/20261116T_pending_and_Halo_controls_v10_trak_full_rerun` changes batch control only: `tools/run_replica_extension_batch.py` accepts BR1–BR3
+cells when the manifest declares `"queue_scope": "all_configured_cells"`, queues every configured
+cell exactly once and lists its `method_overrides`. It is used by `batches/20261116_TRAK_Miro1mask_all`,
+which reruns all 367 TRAK1/TRAK2 cells with the Miro1 mask (gate ÷ 4, support ≥ 20/50, pieces ≥ 60 px).
+Scientific source is identical to v9. Other batches keep their pinned releases. See `CHANGELOG.md`.
+
 # Miro1 mask parameters v9 (2026-11-13)
 
 `releases/20261113T_pending_and_Halo_controls_v9_mask_params` adds an optional Nellie

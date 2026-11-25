@@ -40,7 +40,7 @@ class DetectionMemoryLifecycleTests(unittest.TestCase):
         for start in range(0,625,25):
             path=self.commit(start,start+25,10000+start);old[path]=path.read_bytes();old[path.with_suffix('.json')]=path.with_suffix('.json').read_bytes()
         invocations=[]
-        def invoke(config,command,log):
+        def invoke(config,command,log,**kw):
             a=int(command[command.index('--start')+1]);b=int(command[command.index('--stop')+1]);invocations.append((a,b))
             for start in range(a,b,25):
                 if not (self.out/f'frames{start:04d}_{start+24:04d}.json').exists():self.commit(start,start+25,0)
@@ -80,5 +80,61 @@ class DetectionMemoryLifecycleTests(unittest.TestCase):
         with patch('builtins.print'):stage.release_detection_image(imp)
         self.assertFalse(imp.changes);imp.close.assert_called_once_with();imp.flush.assert_called_once_with()
         stage.release_detection_image(None)
+
+class DetectionStallWatchdogTests(unittest.TestCase):
+    """A hung TrackMate JVM is terminated after its stall timeout and its range retried; committed chunks are kept."""
+    setUp=DetectionMemoryLifecycleTests.setUp;tearDown=DetectionMemoryLifecycleTests.tearDown;commit=DetectionMemoryLifecycleTests.commit
+    def ranges(self,command):return int(command[command.index('--start')+1]),int(command[command.index('--stop')+1])
+    def test_stalled_range_is_retried_and_committed_chunks_reused(self):
+        calls=[]
+        def invoke(config,command,log,**kw):
+            a,b=self.ranges(command);calls.append((a,b,Path(log).name,kw.get('stall_timeout_s')))
+            for start in range(a,b,25):
+                if (self.out/f'frames{start:04d}_{start+24:04d}.json').exists():continue
+                if len(calls)==1 and start>=300:raise runtime.StageStalled('synthetic silent JVM')
+                self.commit(start,start+25,start)
+        with patch.object(runtime,'invoke',side_effect=invoke),patch('builtins.print'):request,chunks=stage.run_detection_batches(self.ctx)
+        self.assertEqual([c[:2] for c in calls],[(0,625),(0,625),(625,1000)])
+        self.assertEqual([c[2] for c in calls],['native_0000_0624.log','native_0000_0624_retry2.log','native_0625_0999.log'])
+        self.assertTrue(all(c[3]==stage.DETECTION_STALL_TIMEOUT_S for c in calls))
+        self.assertEqual(len(chunks),40);self.assertEqual([c['start'] for c in chunks],list(range(0,1000,25)))
+    def test_repeated_stalls_fail_the_cell_not_the_queue(self):
+        calls=[]
+        def invoke(config,command,log,**kw):calls.append(self.ranges(command));raise runtime.StageStalled('synthetic silent JVM')
+        with patch.object(runtime,'invoke',side_effect=invoke),patch('builtins.print'):
+            with self.assertRaisesRegex(RuntimeError,'stalled 3 times') as raised:stage.run_detection_batches(self.ctx)
+        self.assertNotIsInstance(raised.exception,runtime.StageStalled)
+        self.assertEqual(calls,[(0,625)]*stage.DETECTION_RANGE_ATTEMPTS)
+    def test_stall_timeout_override(self):
+        self.assertEqual(stage.detection_stall_timeout_s({}),stage.DETECTION_STALL_TIMEOUT_S)
+        self.assertEqual(stage.detection_stall_timeout_s({'TRAK_DETECTION_STALL_S':'60'}),60.)
+        for bad in ('0','-5'):
+            with self.assertRaises(ValueError):stage.detection_stall_timeout_s({'TRAK_DETECTION_STALL_S':bad})
+
+
+class InvokeStallTests(unittest.TestCase):
+    """Real child processes: a silent child is terminated; a steadily logging child is not."""
+    def setUp(self):
+        import os,tempfile as tf
+        self.env=dict(os.environ);self.tempdir=tf.tempdir
+        directory=ROOT/'validation/detection_memory_fix_20261104/tmp';directory.mkdir(parents=True,exist_ok=True)
+        self.temp=tf.TemporaryDirectory(dir=directory);self.root=Path(self.temp.name)
+        self.config=dict(data_root=str(self.root),control_root=str(self.root/'control'),package_root=str(ROOT))
+    def tearDown(self):
+        import os,tempfile as tf
+        os.environ.clear();os.environ.update(self.env);tf.tempdir=self.tempdir;self.temp.cleanup()
+    def run_child(self,code,stall):
+        import sys
+        return runtime.invoke(self.config,[sys.executable,'-u','-c',code],self.root/'child.log',stall_timeout_s=stall)
+    def test_silent_child_is_terminated_after_the_stall_timeout(self):
+        import time
+        t0=time.monotonic()
+        with patch('builtins.print'),self.assertRaises(runtime.StageStalled):
+            self.run_child("import time;print('started',flush=True);time.sleep(120)",1.5)
+        self.assertLess(time.monotonic()-t0,30);self.assertEqual(runtime._CHILDREN,{})
+    def test_child_that_keeps_logging_is_not_stalled(self):
+        with patch('builtins.print'):
+            self.run_child("import time\nfor i in range(8):\n print(i,flush=True);time.sleep(.4)",1.5)
+
 
 if __name__=='__main__':unittest.main()

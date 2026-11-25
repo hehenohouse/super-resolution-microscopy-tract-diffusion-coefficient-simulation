@@ -8,17 +8,20 @@ from collections import defaultdict
 import csv,hashlib,json,math,re
 from localization_count_data import cell_count_records, summary_count_values, count_mean_records, AVERAGING_LABELS
 
-METRICS=('on_percentage','first_mask_ROI_area_um2','mean_ROI_area_um2')
+BASE_METRICS=('on_percentage','first_mask_ROI_area_um2','mean_ROI_area_um2')
+# Manual cells-in-ROI counts (annotations/cell_counts.csv): per-cell value = ROI value / cells in ROI.
+PER_CELL_METRICS=('first_mask_ROI_area_per_cell_um2','mean_ROI_area_per_cell_um2','localizations_per_cell')
+METRICS=BASE_METRICS+PER_CELL_METRICS
 CONDITIONS=('WT','TDK','MDK')
-CELL_HEADERS=['Condition','BR','Cell','Protein','Acquisition date','Total localizations','On count','Not-on count','On percentage','First-mask ROI area (µm²)','Mean ROI area (µm²)','Unknown count','QC excluded count']
-CELL_TYPES=['text','text','text','text','date','integer','integer','integer','percent','decimal','decimal','integer','integer']
-CELL_WIDTHS=[12,9,10,12,16,23,16,16,18,27,26,17,20]
-COND_HEADERS=['Condition','Protein','Cells with valid On %','BRs with valid On %','Cells with counts','Localizations per cell','On per cell','Not-on per cell','Unknown per cell','QC excluded per cell','On mean (%)','On SD (pp)','First-mask ROI area mean (µm²)','First-mask area SD (µm²)','Mean ROI area mean (µm²)','Mean area SD (µm²)']
-BR_HEADERS=['Condition','BR','Protein','Cells with valid On %','Cells with counts','Localizations per cell','On per cell','Not-on per cell','Unknown per cell','QC excluded per cell','On mean (%)','On SD (pp)','First-mask ROI area mean (µm²)','First-mask area SD (µm²)','Mean ROI area mean (µm²)','Mean area SD (µm²)']
-SUMMARY_TYPES=['text','text','integer','integer','integer','decimal','decimal','decimal','decimal','decimal','percent','decimal','decimal','decimal','decimal','decimal']
-BR_TYPES=['text','text','text','integer','integer','decimal','decimal','decimal','decimal','decimal','percent','decimal','decimal','decimal','decimal','decimal']
-SUMMARY_WIDTHS=[13,12,22,21,20,27,21,23,23,25,18,16,29,26,28,24]
-BR_WIDTHS=[13,9,12,22,20,27,21,23,23,25,18,16,29,26,28,24]
+CELL_HEADERS=['Condition','BR','Cell','Protein','Acquisition date','Total localizations','On count','Not-on count','On percentage','First-mask ROI area (µm²)','Mean ROI area (µm²)','Unknown count','QC excluded count','Cells in ROI (manual count)','Cells used for per-cell values','First-mask area per cell (µm²)','Mean area per cell (µm²)','Localizations per counted cell']
+CELL_TYPES=['text','text','text','text','date','integer','integer','integer','percent','decimal','decimal','integer','integer','decimal','integer','decimal','decimal','decimal']
+CELL_WIDTHS=[12,9,10,12,16,23,16,16,18,27,26,17,20,24,26,28,26,22]
+COND_HEADERS=['Condition','Protein','Cells with valid On %','BRs with valid On %','Cells with counts','Localizations per cell','On per cell','Not-on per cell','Unknown per cell','QC excluded per cell','On mean (%)','On SD (pp)','First-mask ROI area mean (µm²)','First-mask area SD (µm²)','Mean ROI area mean (µm²)','Mean area SD (µm²)','ROIs with cell count','ROIs with >1 cell','First-mask area per cell mean (µm²)','First-mask area per cell SD (µm²)','Mean area per cell mean (µm²)','Mean area per cell SD (µm²)','Localizations per counted cell mean','Localizations per counted cell SD']
+BR_HEADERS=['Condition','BR','Protein','Cells with valid On %','Cells with counts','Localizations per cell','On per cell','Not-on per cell','Unknown per cell','QC excluded per cell','On mean (%)','On SD (pp)','First-mask ROI area mean (µm²)','First-mask area SD (µm²)','Mean ROI area mean (µm²)','Mean area SD (µm²)','ROIs with cell count','ROIs with >1 cell','First-mask area per cell mean (µm²)','First-mask area per cell SD (µm²)','Mean area per cell mean (µm²)','Mean area per cell SD (µm²)','Localizations per counted cell mean','Localizations per counted cell SD']
+SUMMARY_TYPES=['text','text','integer','integer','integer','decimal','decimal','decimal','decimal','decimal','percent','decimal','decimal','decimal','decimal','decimal','integer','integer','decimal','decimal','decimal','decimal','decimal','decimal']
+BR_TYPES=['text','text','text','integer','integer','decimal','decimal','decimal','decimal','decimal','percent','decimal','decimal','decimal','decimal','decimal','integer','integer','decimal','decimal','decimal','decimal','decimal','decimal']
+SUMMARY_WIDTHS=[13,12,22,21,20,27,21,23,23,25,18,16,29,26,28,24,20,18,32,30,30,28,27,25]
+BR_WIDTHS=[13,9,12,22,20,27,21,23,23,25,18,16,29,26,28,24,20,18,32,30,30,28,27,25]
 MEAN_HEADERS=['Condition','BR','Averaging','Cells','Replicas','Total localizations mean','On count mean','Not-on count mean']
 MEAN_TYPES=['text','text','text','integer','integer','decimal','decimal','decimal']
 MEAN_WIDTHS=[13,9,28,10,12,27,23,25]
@@ -86,8 +89,8 @@ def _pivot(rows,keys):
 def _count_notes(grouped):
     lines=[]
     for identity,metrics in grouped.items():
-        cellcounts=[_int(metrics.get(metric,{}).get('n_cells_valid')) for metric in METRICS]
-        brcounts=[_int(metrics.get(metric,{}).get('n_BRs_valid')) for metric in METRICS]
+        cellcounts=[_int(metrics.get(metric,{}).get('n_cells_valid')) for metric in BASE_METRICS]
+        brcounts=[_int(metrics.get(metric,{}).get('n_BRs_valid')) for metric in BASE_METRICS]
         if len(set(cellcounts))>1 or len(set(brcounts))>1:
             lines.append('/'.join(identity)+': valid cells (On / first area / mean area) '+ '/'.join('NA' if value is None else str(value) for value in cellcounts)+'; valid BRs '+ '/'.join('NA' if value is None else str(value) for value in brcounts)+'.')
     return ' '.join(lines)
@@ -96,6 +99,16 @@ def _count_notes(grouped):
 def _summary_values(metrics):
     on=metrics.get('on_percentage',{});first=metrics.get('first_mask_ROI_area_um2',{});mean=metrics.get('mean_ROI_area_um2',{})
     return [_fraction(on.get('mean')),_number(on.get('sd')),_number(first.get('mean')),_number(first.get('sd')),_number(mean.get('mean')),_number(mean.get('sd'))]
+
+
+def _cell_count_values(cells,metrics,condition,BR=None):
+    """ROIs with a manual count, ROIs with more than one cell, then per-cell means/SD (same weighting as the area columns)."""
+    rows=[row for row in cells if row.get('genotype')==condition and (BR is None or row.get('BR')==BR)]
+    counted=[_number(row.get('cells_in_ROI')) for row in rows];counted=[value for value in counted if value is not None]
+    values=[len(counted),sum(value>1 for value in counted)]
+    for metric in PER_CELL_METRICS:
+        saved=metrics.get(metric,{});values+=[_number(saved.get('mean')),_number(saved.get('sd'))]
+    return values
 
 
 def build_reader_tables(node_record,data_root):
@@ -111,14 +124,14 @@ def build_reader_tables(node_record,data_root):
         grouped=_pivot(summary,['condition']);rows=[]
         for identity,metrics in sorted(grouped.items(),key=lambda item:_condition_order(item[0][0])):
             on=metrics.get('on_percentage',{})
-            rows.append([identity[0],protein,_int(on.get('n_cells_valid')),_int(on.get('n_BRs_valid'))]+summary_count_values(count_records,identity[0])+_summary_values(metrics))
+            rows.append([identity[0],protein,_int(on.get('n_cells_valid')),_int(on.get('n_BRs_valid'))]+summary_count_values(count_records,identity[0])+_summary_values(metrics)+_cell_count_values(cells,metrics,identity[0]))
         notes=_count_notes(grouped)
         tables.append(_sheet('Condition Summary',protein+' | condition summary','Count columns are per-cell means across the condition; On% and area means give each BR equal weight, with SD between BR means.',COND_HEADERS,rows,SUMMARY_TYPES,SUMMARY_WIDTHS,notes))
     if level in ('BR','condition','comparison'):
         grouped=_pivot(brrows,['condition','BR']);rows=[]
         for identity,metrics in sorted(grouped.items(),key=lambda item:(_condition_order(item[0][0]),_natural(item[0][1]))):
             on=metrics.get('on_percentage',{})
-            rows.append([identity[0],identity[1],protein,_int(on.get('n_cells_valid'))]+summary_count_values(count_records,identity[0],identity[1])+_summary_values(metrics))
+            rows.append([identity[0],identity[1],protein,_int(on.get('n_cells_valid'))]+summary_count_values(count_records,identity[0],identity[1])+_summary_values(metrics)+_cell_count_values(cells,metrics,identity[0],identity[1]))
         notes=_count_notes(grouped)
         tables.append(_sheet('BR Summary',protein+' | biological replicate summary','Per-cell count columns give each cell with saved counts equal weight; On% and area means use their valid cells, with SD between cell values.',BR_HEADERS,rows,BR_TYPES,BR_WIDTHS,notes))
     means=count_mean_records(count_records,level)
@@ -127,11 +140,15 @@ def build_reader_tables(node_record,data_root):
         tables.append(_sheet('Localization Means',protein+' | localization count means','BR means give each available cell equal weight; condition means explicitly show pooled-cell and equal-replica averaging.',MEAN_HEADERS,meanrows,MEAN_TYPES,MEAN_WIDTHS,'Total = On + Not-on + Unknown; QC excluded is separate. Only cells with saved counts contribute. All-cell mean pools cells; Equal-replica mean averages BR cell means equally. These count means do not change On-percentage or area summary means.'))
     rows=[]
     for row in cells:
-        rows.append([row.get('genotype'),row.get('BR'),row.get('cell'),row.get('molecule'),row.get('acquisition_date') or None,_int(row.get('selected')),_int(row.get('On')),_int(row.get('Not_on')),_fraction(row.get('on_percentage')),_number(row.get('first_mask_ROI_area_um2')),_number(row.get('mean_ROI_area_um2')),_int(row.get('unknown')),_int(row.get('QC_excluded'))])
+        rows.append([row.get('genotype'),row.get('BR'),row.get('cell'),row.get('molecule'),row.get('acquisition_date') or None,_int(row.get('selected')),_int(row.get('On')),_int(row.get('Not_on')),_fraction(row.get('on_percentage')),_number(row.get('first_mask_ROI_area_um2')),_number(row.get('mean_ROI_area_um2')),_int(row.get('unknown')),_int(row.get('QC_excluded')),
+                     _number(row.get('cells_in_ROI')),_int(row.get('cells_for_per_cell')),_number(row.get('first_mask_ROI_area_per_cell_um2')),_number(row.get('mean_ROI_area_per_cell_um2')),_number(row.get('localizations_per_cell'))])
     name='Cell Summary' if level=='cell' else 'Cells'
     tables.append(_sheet(name,protein+' | '+key+' | cell measurements','One row per cell. Empty numeric cells mean unavailable; values retain their saved precision.',CELL_HEADERS,rows,CELL_TYPES,CELL_WIDTHS))
     common='Total localizations = On + Not-on + Unknown (QC-selected observations); QC excluded is separate. Per-cell count columns are summed counts divided by Cells with counts, with each available cell weighted equally. On % = On / (On + Not-on). First mask: frames 0–49 (1 s support block); mean area: time-weighted over all 2,500 frames.'
     weights=' Cells have equal weight within each BR; BRs have equal weight within each condition. On SD is in percentage points (pp).'
+    weights+=(' Cells in ROI is a manual count of cells inside the drawn ROI (0.5 = about half a cell inside); per-cell columns divide the ROI value by the cells used'
+              ' (a partial cell counts as one: 0.5 -> 1, 1.5 -> 2, because a cell cut by the ROI keeps most of its mitochondria inside)'
+              ' (area per cell; total localizations per counted cell). The existing "per cell" count columns are per ROI. Blank = not counted. ROI-level columns are unchanged.')
     old=tables[0]['notes'];tables[0]['notes']=common+weights+(' '+old if old else '')
     for table in tables[1:]:
         if not table['notes']:table['notes']='Definitions and weighting are provided on the first worksheet.'

@@ -85,5 +85,29 @@ class SavedScalarSchemaTests(unittest.TestCase):
         record,cell=summaries._load_cell(self.sample,artifacts,self.config)
         self.assertEqual(record['on_percentage'],40.);self.assertTrue(cell['eligible']);self.assertLess(cell['curves']['On'][-1],0.)
         np.testing.assert_allclose(cell['curves']['On'],curve,rtol=1e-13,atol=1e-15)
+    def _old_outputs(self):
+        """Old saved outputs of a legacy cell, made with a different (old) mask."""
+        old=self.root/'old';(old/'masks').mkdir(parents=True);self.sample.legacy_output=old
+        (old/'classification_summary.json').write_text(json.dumps(dict(self.counts,On=25,Not_on=25)))
+        pd.DataFrame([dict(original_frame_start=0,original_frame_stop_exclusive=50,mask_ROI_area_um2=9.)]).to_csv(old/'masks/per_block_statistics.csv',index=False)
+        return old
+    def test_old_saved_counts_still_cross_check_legacy_or_missing_assignment(self):
+        old=self._old_outputs()
+        with self.assertRaisesRegex(ValueError,'Conflicting saved localization counts'):
+            self.load(dict(self.counts,**self.areas))
+        legacy=Artifact('a','assignment',dict(summary=str(old/'classification_summary.json')),dict(legacy_output=str(old)))
+        with self.assertRaisesRegex(ValueError,'Conflicting saved localization counts'):
+            self.load(dict(counts=self.counts,**self.areas),legacy)
+    def test_recomputed_assignment_supersedes_old_saved_counts_and_areas(self):
+        self._old_outputs();p=self.root/'new_classification.json';p.write_text(json.dumps(dict(counts=self.counts)))
+        art=Artifact('a','assignment',dict(summary=str(p)),dict(counts=dict(self.counts)))
+        value=self.load(dict(counts=self.counts,**self.areas),art)
+        self.assertEqual(value['On'],20);self.assertEqual(value['on_percentage'],40.)
+        b=self.root/'new_blocks.csv';pd.DataFrame([dict(original_frame_start=0,original_frame_stop_exclusive=50,mask_ROI_area_um2=100.)]).to_csv(b,index=False)
+        value=self.load(dict(counts=self.counts),art,extra=dict(mask_roi=Artifact('m','mask_roi',dict(statistics=str(b)))))
+        self.assertEqual(value['mean_ROI_area_um2'],100.)
+        changed=dict(self.counts,On=21,Not_on=29)
+        with self.assertRaisesRegex(ValueError,'Conflicting saved localization counts'):
+            self.load(dict(counts=changed,**self.areas),art)
 
 if __name__=='__main__':unittest.main()

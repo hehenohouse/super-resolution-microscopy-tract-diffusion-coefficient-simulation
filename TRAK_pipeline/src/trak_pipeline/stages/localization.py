@@ -64,6 +64,19 @@ def validate_detection_settings(settings):
 # detector_memory_fix (about 80 MB of retained heap per 25-frame chunk) while restarting
 # the JVM 3 times per 2500-frame cell instead of 9.
 NATIVE_JVM_FRAME_LIMIT = 625
+# Execution-only watchdog (not part of scientific identity): a bounded TrackMate JVM normally logs every 25-frame
+# chunk within seconds. If its log is silent for this long it is treated as hung (2026-11-21: WT_Miro2_BR2_T4 hung
+# for 2.5 days), terminated and the same range retried; committed chunks are reused. TRAK_DETECTION_STALL_S overrides.
+DETECTION_STALL_TIMEOUT_S = 900
+DETECTION_RANGE_ATTEMPTS = 3
+
+
+def detection_stall_timeout_s(environ=None):
+    value = (os.environ if environ is None else environ).get('TRAK_DETECTION_STALL_S')
+    if value is None: return DETECTION_STALL_TIMEOUT_S
+    seconds = float(value)
+    if not seconds > 0: raise ValueError('TRAK_DETECTION_STALL_S must be a positive number of seconds')
+    return seconds
 NATIVE_JVM_HEAP_GB = 6
 
 
@@ -133,13 +146,24 @@ def run_detection_batches(ctx):
     from ..runtime import invoke
     script=ctx.package_root/'tools/native_detection_bootstrap.py'
     n=ctx.config['acquisition']['frames'];chunk=request['chunk_frames'];source=fingerprint(ctx.sample.C2_file)
+    from ..runtime import StageStalled
+    stall=detection_stall_timeout_s()
     for start,stop in detection_jvm_ranges(n,chunk):
-        existing=[checked_detection_chunk(ctx.output_dir,f,min(f+chunk,n),source,ctx.parameters) for f in range(start,stop,chunk)]
-        if all(value is not None for value in existing):
-            print(f'DETECTION_JVM_RANGE {start}-{stop-1} | all committed chunks reused; JVM not started',flush=True)
-            continue
-        print(f'DETECTION_JVM_RANGE {start}-{stop-1} | bounded native process; maximum {NATIVE_JVM_FRAME_LIMIT} frames',flush=True)
-        invoke(ctx.config,[ctx.runtime['detector_python'],'-B','-s','-u',str(script),'--job',str(job),'--start',str(start),'--stop',str(stop)],ctx.output_dir/f'native_{start:04d}_{stop-1:04d}.log')
+        for attempt in range(1,DETECTION_RANGE_ATTEMPTS+1):
+            existing=[checked_detection_chunk(ctx.output_dir,f,min(f+chunk,n),source,ctx.parameters) for f in range(start,stop,chunk)]
+            if all(value is not None for value in existing):
+                if attempt==1:print(f'DETECTION_JVM_RANGE {start}-{stop-1} | all committed chunks reused; JVM not started',flush=True)
+                break
+            print(f'DETECTION_JVM_RANGE {start}-{stop-1} | bounded native process; maximum {NATIVE_JVM_FRAME_LIMIT} frames'
+                  +(f' | retry {attempt}/{DETECTION_RANGE_ATTEMPTS} after a stalled JVM' if attempt>1 else ''),flush=True)
+            try:
+                invoke(ctx.config,[ctx.runtime['detector_python'],'-B','-s','-u',str(script),'--job',str(job),'--start',str(start),'--stop',str(stop)],
+                       ctx.output_dir/(f'native_{start:04d}_{stop-1:04d}'+(f'_retry{attempt}' if attempt>1 else '')+'.log'),stall_timeout_s=stall)
+                break
+            except StageStalled as error:
+                print(f'DETECTION_JVM_STALLED {start}-{stop-1} | attempt {attempt}/{DETECTION_RANGE_ATTEMPTS}: {error}',flush=True)
+                if attempt==DETECTION_RANGE_ATTEMPTS:
+                    raise RuntimeError(f'TrackMate JVM stalled {DETECTION_RANGE_ATTEMPTS} times on frames {start}-{stop-1}; cell left incomplete, committed chunks kept') from error
         for f in range(start,stop,chunk):
             if checked_detection_chunk(ctx.output_dir,f,min(f+chunk,n),source,ctx.parameters) is None:
                 raise RuntimeError('Bounded detector exited without a committed chunk at original frame '+str(f))

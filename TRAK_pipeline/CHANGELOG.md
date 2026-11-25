@@ -4,6 +4,154 @@ This log separates production changes, reporting repairs and isolated experiment
 Historical dates describe recorded work, not new analysis during publication.
 The November 2 update prepares English source documentation for GitHub; scientific data remain on My Book.
 
+## 2026-11-25 — Completed datasets added to the current queue (batch manifest only)
+
+`batches/20261120_TDKctrl_Miro2_then_TRAK_all` gains three jobs after `TRAK_Miro1mask`: `Miro1` (dataset, `batches/20261113_Miro1`), `TRAK2-TRAK1OE` (dataset, `batches/20261118_TRAK2-TRAK1OE`) and `HaloTag_only_Miro1mask` (control, `batches/20261116_HaloTag_Miro1mask`), all on v19. Their cells are complete and skipped; START/RESUME refresh their summaries after the TRAK rerun, and the `UPDATE_CTRL_MIRO2_TRAK_SUMMARIES_WINDOWS.cmd` launcher refreshes all six dataset summaries in one click. Read-only plan after the change: 491 complete, 150 pending (TRAK2), queue_state_writes 0. No code or release change. The Miro1 and TRAK2-TRAK1OE summaries were regenerated with v19 on the Mac the same day (cell counts, partial cell counts as one).
+
+## 2026-11-25 — Queue summaries every 10 cells (releases/20261125T_pending_and_Halo_controls_v19_summary_every_10)
+
+Measured on Windows (TRAK rerun): the time between a cell's figures and the next cell grows with the number of completed cells of that protein, because every refresh re-reads all of them (TRAK1: 1.2 min at 17–42 cells, 2.4 min at 95–123, 3.3 min at 171–192; it fell to 1.1 min when TRAK2 started). With 150 TRAK2 cells left this would be ≈ 5 h of the remaining ≈ 21 h. Progress at that point: TDK control 10/10, Miro2 100/100, TRAK 217/367 (TRAK1 186/186, TRAK2 31/181); per cell Miro2 17.9 min (21.2 before the 2026-11-23 speed settings), TRAK 8.5 min (12.7), Nellie 4.1 min (9.2).
+
+### Changed (queue orchestration only; cells, science and summary contents unchanged)
+
+- `tools/run_replica_extension_batch.py` (`execute_queue`, used by extension and dataset batches): the dataset summary is refreshed every `TRAK_SUMMARY_EVERY_CELLS` completed cells (default 10; `1` restores a refresh after every cell), and always after the first-cell gate cell, when a stop is requested (STOP_AFTER_CURRENT_CELL) and after the dataset's last cell; the final summaries are unchanged. Deferred cells print `summary deferred (k of 10 ...)`. After Ctrl+C or a closed window the summary may lag by up to 9 cells; the UPDATE…SUMMARIES launcher refreshes it.
+- Tests `tests/test_summary_every_cells.py` (4). Mac run: 232 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- The same 11 manifests repinned v18 → v19.
+
+## 2026-11-23 — Summary code is part of the summary input signature (releases/20261123T_pending_and_Halo_controls_v18_summary_code_signature)
+
+With v17 the HaloTag-only (Miro1 mask) summary was reused unchanged ("reused": true) and still showed the v16 values (e.g. 989 µm² for WT_HaloTagOnly_BR2_T3): the fast reuse path compared inputs, counts and methods, but not the code that builds the saved records, and the same inputs had just been summarized with v16 on the Mac.
+
+### Changed (summary/reporting only)
+
+- `stages/summaries.py`: `_summary_code_digest()` (SHA-256 of `stages/summaries.py`, `compat/reader_table_data.py`, `compat/localization_count_data.py`) is part of the fast-path input signature, so records and reader workbook jobs made by older summary code are rewritten instead of reused. Summary ID and cell stages are unchanged.
+- `tests/test_summary_cell_counts.py`: a different summary-code digest changes the input signature. Mac run: 228 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- The same 11 manifests repinned v17 → v18 (v17 was never used for a run on Windows).
+
+## 2026-11-23 — A partial cell counts as one in per-cell values (releases/20261123T_pending_and_Halo_controls_v17_partial_cells)
+
+v16 divided ROI values by the manual count, so a ROI holding about half a cell (0.5) had its area doubled. On the Miro1-mask data, the ten 0.5 ROIs with saved areas already hold as much mitochondrial mask as typical single-cell ROIs (12th–100th percentile of the single-cell ROIs of their group), because a cell cut by the ROI edge keeps most of its perinuclear mitochondria inside; after ÷0.5, six of the ten exceeded every single-cell ROI of their group (e.g. WT_HaloTagOnly_BR2_T3: 495 → 989 µm², single-cell maximum 481 µm²).
+
+### Changed (summary/reporting only)
+
+- `stages/summaries.py`: per-cell values divide by `cells_for_per_cell = ceil(cells_in_ROI)` (0.5 → 1, 1.5 → 2, 2.5 → 3; whole numbers unchanged). `cells_in_ROI` keeps the manual count as recorded; `cells_for_per_cell` is saved next to it.
+- `compat/reader_table_data.py`: cell sheets gain "Cells used for per-cell values"; the definition note states the rule.
+- `tests/test_summary_cell_counts.py` updated (0.5 keeps the ROI value; 1.5 → 2, 2.5 → 3). Mac run: 228 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- The same 11 manifests repinned v16 → v17. The partial-cell ROIs stay identifiable (`cells_in_ROI` < 1 or non-integer) for a sensitivity analysis restricted to complete single-cell ROIs.
+
+## 2026-11-23 — Manual cells-in-ROI counts in Cell Metrics (releases/20261123T_pending_and_Halo_controls_v16_cell_counts)
+
+Some drawn ROIs contain more than one cell (or only part of one). All 642 cells of TRAK1, TRAK2, Miro1, Miro2, TRAK2-TRAK1OE and both HaloTag-only controls were counted by eye on C1 contact sheets (504 ROIs with 1 cell, 103 with 2, 18 with 3, 15 with about half a cell, one 1.5 and one 2.5). TDK ROIs contain more than one cell far more often (about 25–40 %) than WT (3–6 %), so ROI-level areas and localization counts are not comparable between genotypes without this correction.
+
+### Added (summary/reporting only; no cell stage, cache identity or ROI-level value changes)
+
+- `annotations/cell_counts.csv` (shared, outside releases; `TRAK_CELL_COUNTS` overrides the path) with `sample_id, dataset, cells_in_ROI, source, in_analysis`, and `annotations/README.txt`.
+- `src/trak_pipeline/stages/summaries.py`: each summarized cell gains `cells_in_ROI` and three per-cell values: `first_mask_ROI_area_per_cell_um2`, `mean_ROI_area_per_cell_um2` (ROI mitochondrial mask area ÷ cells in ROI) and `localizations_per_cell` (total localizations ÷ cells in ROI). BR and condition statistics are computed for them exactly as for the area metrics (equal cell weight within BR, equal BR weight within condition). A blank count stays unavailable (never 1 or 0). The counts of the summarized cells are part of the summary input signature, so editing the count file rewrites the next summary; the summary ID is unchanged.
+- `compat/reader_table_data.py`: `Cell_Metrics.xlsx` gains "Cells in ROI (manual count)", "First-mask area per cell", "Mean area per cell" and "Localizations per counted cell" on the cell sheets, and "ROIs with cell count", "ROIs with >1 cell" plus per-cell means/SD on the Condition and BR summaries. Existing columns are unchanged (the older "per cell" count columns remain per ROI).
+- `compat/export_reader_tables.py`: template tables widen to the sheet's columns, and added columns reuse the number format of a template column of the same type.
+- `stages/overview_pages.py`: labels for the three per-cell metrics.
+- Tests `tests/test_summary_cell_counts.py` (10): count-file parsing, per-cell division, BR/condition statistics, workbook columns/formats/table widths (verified by the exporter), signature change when counts change, blank columns without a count file. Mac run: 228 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- Repinned to v16: `20261120_TDKctrl_Miro2_then_TRAK_all` with its children (`20261120_HaloTagOnly-TDK`, `20261120_Miro2`, `20261116_TRAK_Miro1mask`) and `20261116_TRAK_Miro1mask_all`, plus the completed `20261113_Miro1(_all)`, `20261116_HaloTag_Miro1mask(_all)` and `20261118_TRAK2-TRAK1OE(_all)` so their summaries can be refreshed with the counts.
+
+### Speed settings (launchers only, same day)
+
+`START/RESUME_CTRL_MIRO2_TRAK_WINDOWS.cmd` set `TRAK_FIT_WORKERS=20`, `TRAK_DETECTION_THREADS=13`, `TRAK_NELLIE_WORKERS=10` (previously automatic 10 / 12 / 3). Measured before: Miro2 fit 205–231 localizations/s with 10 workers; WT_Miro2_BR2_T4 283/s with 20 (≈ +30 %, 12 physical cores). In the TRAK rerun, detection and fit are reused and Nellie takes 9.2 of ≈ 11–13 min per cell (median of 108 cells) with 3 processes. Profiling the fit on the Mac: ≈ 92 objective evaluations per localization, dominated by small-array NumPy overhead; a compiled objective would change floating-point results and was not adopted. Originals in `_old_launchers_20261118/`.
+
+## 2026-11-23 — Watchdog for hung TrackMate detection (releases/20261123T_pending_and_Halo_controls_v15_detection_watchdog)
+
+The chained queue stopped making progress for 2.5 days: in WT_Miro2_BR2_T4 (14th Miro2 cell) the bounded TrackMate JVM for frames 1875–2499 logged chunk 2425–2449, started chunk 2450–2474 and then produced no output, no error and no exit from 2026-11-21 02:3x UTC until the queue was stopped on 2026-11-23. Nellie for the same cell finished normally meanwhile, and the C2 frames 2400–2499 read normally on the Mac, so the JVM hung (not the data or the PC). The stop request could not take effect because it waits for the current cell. Before that, the TDK HaloTag-only control finished 10/10 and Miro2 13/100.
+
+### Changed (execution only; scientific identities unchanged, no completed cell is recomputed)
+
+- `src/trak_pipeline/runtime.py`: `invoke(..., stall_timeout_s=None)`. With a timeout, a child whose log gains no output for that long has its process tree terminated (Windows Job Object / Mac process group, as on Ctrl+C) and `StageStalled` is raised. Default `None` keeps the previous behaviour for every other stage.
+- `src/trak_pipeline/stages/localization.py`: each bounded detection JVM range runs with a 900 s stall timeout (`TRAK_DETECTION_STALL_S` overrides) and is retried up to 3 times; committed 25-frame chunks are reused on each retry, and retry logs are `native_<range>_retry<k>.log`. After 3 stalls the cell fails with an explicit error (the queue continues with the next cell; committed chunks are kept for a later resume).
+- Tests in `tests/test_detection_memory_lifecycle.py`: retry with chunk reuse, give-up after 3 stalls, timeout override, and real child processes (a silent child is terminated; a steadily logging child is not). Mac run: 218 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- `batches/20261120_TDKctrl_Miro2_then_TRAK_all` and its children (`20261120_HaloTagOnly-TDK`, `20261120_Miro2`, `20261116_TRAK_Miro1mask`) plus `20261116_TRAK_Miro1mask_all` repinned v14 → v15. Launchers unchanged.
+
+## 2026-11-20 — Miro2 and the TDK negative control (releases/20261120T_pending_and_Halo_controls_v14_miro2_tdkctrl)
+
+Two new datasets, both with the Miro1 mask (`broad.frob_thresh_division 4`, `mask_threshold.minimum_support 20`, `mask_cleanup.min_foreground_pixels 60`; methods identical to `batches/20261113_Miro1/configs/Miro1.json`). Inputs were only read (directory entries, first TIFF IFDs; channel order checked on mean images: C1 mitochondria, C2 target).
+
+- `Xinran_Miro2`: Halo-Miro2 in WT / TDK / MDK, BR1–BR3 (same acquisition dates as Miro1), 100 cells (WT 10/10/12, TDK 11/12/12, MDK 10/11/12). Cell names carry clone labels (`TDKd3`, `MDKb10`); the condition comes from the BR folder name. Batch `batches/20261120_Miro2`.
+- `Xinran_TDK_NegativeControl`: HaloTag-only in TDK cells, BR1 only (2026-09-30), 10 cells. Dataset `HaloTagOnly-TDK`, condition TDK, summarized alone (like the WT HaloTag-only control). With one BR there is no between-replica SD or test; cell-level distributions only. Batch `batches/20261120_HaloTagOnly-TDK`.
+
+### Changed (batch preparation and tests only)
+
+- `tools/prepare_dataset_batch.py --condition-from-folder`: BR folders sit directly in the dataset folder and each names exactly one declared condition as a whole `_` token (e.g. `20251016_TDK_Miro2_BR1`); a folder naming none or several is an error, as is a declared condition without folders.
+- Tests: `tests/test_dataset_batch.py` (folder-named conditions), `tests/test_summary_condition_subsets.py` (a dataset declaring a single BR completes its summary with BR SD unavailable). No scientific code changed; `src/` is identical to v13.
+
+### Queue
+
+- Chained queue `batches/20261120_TDKctrl_Miro2_then_TRAK_all` (v14): TDK control, then Miro2, then the full TRAK rerun continues (user's order). `batches/20261116_TRAK_Miro1mask(_all)` repinned v13 → v14 (no code difference for that queue). `batches/20261118_TRAK2-TRAK1OE_then_TRAK_all` is superseded (its TRAK2-TRAK1OE part finished 42/42 on 2026-11-19; TRAK was at 125/367 when the window was closed on 2026-11-20).
+- Drive-root launchers `*_CTRL_MIRO2_TRAK_WINDOWS.cmd` + `READ_ME_CTRL_MIRO2_TRAK_WINDOWS.txt`; the `*_NEW_THEN_TRAK_*` set was moved to `_old_launchers_20261118/NEW_THEN_TRAK/`.
+
+## 2026-11-18 — New dataset TRAK2-TRAK1OE (releases/20261118T_pending_and_Halo_controls_v13_flat_dataset)
+
+New data `Xinran_TRAK2_inTRAK1OE`: TRAK1/2 DKO (TDK) cells overexpressing TRAK1-flag, imaging Halo-TRAK2 (C1 mitochondria, C2 single molecules; 2500 × 684 × 428, 117 nm, 20 ms, same as TRAK2 and Miro1). Three replicas, 43 cell folders. It is its own dataset (`TRAK2-TRAK1OE`), summarized alone and never pooled with the TDK group of TRAK2. The condition field records the cell line (TDK), as HaloTag-only records WT.
+
+### Changed (batch preparation only)
+
+- `tools/prepare_dataset_batch.py`:
+  - `--flat`: BR folders sit directly in the dataset folder (no condition subfolder); exactly one declared condition labels every cell.
+  - Cell folder dates may be `YYYYMMDD_` (e.g. `20260423_`) as well as `MMDDYY_`; anything else is rejected.
+  - `--exclude-cell SAMPLE_ID=reason`: the cell is recorded in the audit, manifest and `INPUT_INVENTORY.md` but not queued or summarized; its TIFF headers are not checked. An exclusion that matches no cell is an error.
+  - Default layout and every existing batch are unchanged.
+- Tests in `tests/test_dataset_batch.py`. No scientific code changed; `src/` is identical to v12.
+
+### Batch
+
+- `batches/20261118_TRAK2-TRAK1OE` (dataset kind) + `batches/20261118_TRAK2-TRAK1OE_all`, pinned to v13: 42 cells (BR1 15, BR2 15, BR3 12) with the Miro1 mask (`broad.frob_thresh_division 4`, `mask_threshold.minimum_support 20`, `mask_cleanup.min_foreground_pixels 60`; methods identical to `batches/20261113_Miro1/configs/Miro1.json`). First-cell gate on.
+- Excluded: `TDK_TRAK2-TRAK1OE_BR1_T4` (`20260423_TDK_650TK2_TK1fgOE_T4f`), 1000 frames instead of 2500.
+- Inputs were only read (directory entries, first TIFF IFDs); nothing in `Xinran_TRAK2_inTRAK1OE` was renamed, copied or written by preparation.
+- Chained queue `batches/20261118_TRAK2-TRAK1OE_then_TRAK_all` (v13): TRAK2-TRAK1OE first, then the full TRAK rerun continues automatically (the combined controller starts the next child only after the previous one ends COMPLETE or COMPLETE_WITH_FAILURES_OR_EXCLUSIONS; a stop request or first-cell failure ends the chain). For this, `batches/20261116_TRAK_Miro1mask(_all)` were repinned v12 → v13 (no code difference for that queue). Read-only plan: 42 pending + TRAK 17 complete / 350 pending.
+- Drive-root launchers `*_NEW_THEN_TRAK_WINDOWS.cmd` and `READ_ME_NEW_THEN_TRAK_WINDOWS.txt`. All older drive-root launchers (41 Windows `.cmd`/`.txt` and 6 Mac `.command`, including the separate TRAK2_TRAK1OE and TRAK_MIRO1MASK sets) were moved, not deleted, to `_old_launchers_20261118/` with an index `README.txt` (user request).
+
+## 2026-11-18 — Resume recognizes completed BR1–BR3 rerun cells (releases/20261118T_pending_and_Halo_controls_v12_rerun_resume)
+
+v12 = v11 plus a batch-control fix; v11 was frozen but never run and is superseded. The read-only queue plan counted only the 6 completed BR4/BR5 cells and listed the 11 completed BR1–BR3 cells as pending (v10 and v11 alike): `completion_outputs_valid` required a modular-cache marker for every stage, but in a full rerun detection, fit and c1_mean of BR1–BR3 cells are legacy-adapted saved files without one. A resume would have re-entered every completed BR1–BR3 cell (no science recomputed, but a cell pass plus a summary each time).
+
+- `tools/run_replica_extension_batch.py`: a stage whose recorded artifact carries `legacy_output` metadata is complete when every recorded file exists (paths rebased with `config.portable_input`); every other stage still needs its committed marker and recorded byte sizes.
+- Tests: `CompletionOutputsTests` in `tests/test_replica_extension_batch.py` (the legacy case fails on v11). Mac run: 209 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- Read-only queue plan with v12: 17 complete / 350 pending.
+- `batches/20261116_TRAK_Miro1mask(_all)` repinned to v12.
+
+## 2026-11-18 — Summary accepts recomputed BR1–BR3 assignments (releases/20261118T_pending_and_Halo_controls_v11_rerun_summary)
+
+The first 17 cells of the full TRAK rerun (TRAK1, all complete, no cell failures) could not be summarized: after every cell the five-replica summary stopped with `Conflicting saved localization counts for WT_TRAK1_BR1_T1`. For BR1–BR3 cells the summary also cross-checked the counts against the legacy `classification_summary.json`, which records the old mask (WT_TRAK1_BR1_T1: On 86,534 old vs 94,129 new; selected 155,878 in both). The cell results themselves were correct; nothing was published by the failing summary.
+
+### Changed (summary only)
+
+- `src/trak_pipeline/stages/summaries.py`: old saved outputs (`classification_summary.json` for counts, `masks/per_block_statistics.csv` for areas) are used as a source or cross-check only while the corresponding stages are absent or legacy-adapted (`legacy_output` in their metadata). A recomputed assignment / mask_roi / mask_cleanup supersedes them. Cross-checks between the new statistics, the assignment metadata and the new classification summary are unchanged, and legacy-adapted cells are still checked against their old files.
+- Tests in `tests/test_summary_legacy_statistics.py`: old records still conflict for legacy or missing assignments; a recomputed assignment uses its own counts and areas and still rejects inconsistent new records. The new test fails on v10. Mac run: 205 tests, failures only the 4 known macOS /var→/private/var tempdir artifacts.
+- Read-only check on the Mac: all 17 completed cells load through the summary cell loader with v11 source (11 legacy BR1–BR3 cells use their recomputed assignment).
+- Only `batches/20261116_TRAK_Miro1mask(_all)` is repinned (to v11, then to v12 below the same day). Per-cell scientific caches are unaffected (summary code is not part of their identity); no cell is rerun.
+
+## 2026-11-16 — Full TRAK1/TRAK2 rerun with the Miro1 mask (releases/20261116T_pending_and_Halo_controls_v10_trak_full_rerun)
+
+The HaloTag-only control rerun with the Miro1 mask (entry below) kept the negative control at background (On 29.3% → 30.3%, enrichment 1.51× → 1.49×), so all TRAK1/TRAK2 cells are rerun with the same mask for a common basis with Miro1 and the control. Original-mask TRAK results are kept; nothing is replaced.
+
+### Changed (batch control only)
+
+- `tools/run_replica_extension_batch.py`: a manifest with `"queue_scope": "all_configured_cells"` may queue BR1–BR3 cells. It is accepted only when every configured cell of each protein is queued exactly once, `existing_cells` and `old_cells` are 0, and `method_overrides` is declared. Ordinary BR4/BR5 extension manifests (no `queue_scope`) behave exactly as before, including the rejection of BR1–BR3 cells. New test in `tests/test_replica_extension_batch.py`. No scientific code changed; v10 `src/` is identical to v9.
+- Mac test run (cleanup env, PYTHONPATH=src): 203 tests; failures are the 4 known macOS /var→/private/var tempdir artifacts plus one timing-sensitive fit-pool stop test that passes when run alone.
+
+### Batch
+
+- `batches/20261116_TRAK_Miro1mask` (replica_extension kind, full rerun): 367 cells (TRAK1 186, TRAK2 181; WT/TDK/MDK × BR1–BR5). Configurations = `batches/20261102_BR4_BR5/configs/TRAK1_BR4_BR5.json` / `TRAK2_BR4_BR5.json` with the three Miro1 mask overrides (`broad.frob_thresh_division 4`, `mask_threshold.minimum_support 20`, `mask_cleanup.min_foreground_pixels 60`); methods block identical to `batches/20261113_Miro1/configs/Miro1.json`. Separate control roots `_batch_pipeline/batches/20261116_TRAK_Miro1mask`. First-cell gate on.
+- Queue order: TRAK1 then TRAK2 (the controller's fixed order); within each protein the cells are interleaved round-robin over genotype × replica, so a stopped queue leaves a balanced subset. Summaries are refreshed after every cell, so a stop leaves an up-to-date partial summary.
+- Detection, fit and c1_mean are reused for every cell, including the BR1–BR3 cells computed by the legacy release (read through the legacy adapter, verified with a read-only stage plan for WT_TRAK1_BR1_T1 and WT_TRAK1_BR4_T1); broad and every later stage are recomputed. Expected ~13–14 min per cell on the lab PC (~42 h TRAK1, ~83 h total).
+- Original-mask results stay in place: legacy BR1–BR3 outputs, BR4/BR5 modular cache entries (different hashes), five-replica summary data (`modular_summary_4134f89742a9d1ce`) and `batches/20261102_BR4_BR5` state. Un-versioned figure folders and top-level pages of `Xinran_TRAK1` and `Xinran_FullsetTRAK2` were copied beforehand to `<data root>/_old_mask_figures_v8_backup_20261116`.
+- Drive-root launchers `*_TRAK_MIRO1MASK_WINDOWS.cmd` and `READ_ME_TRAK_MIRO1MASK_WINDOWS.txt` (how to stop at any time).
+
+## 2026-11-16 — HaloTag-only control queue with the Miro1 mask (release 20261113T_pending_and_Halo_controls_v9_mask_params, no code change)
+
+Adds a matched negative control for Miro1. The original-mask HaloTag-only results are kept; nothing is replaced.
+
+- Prepared `batches/20261116_HaloTag_Miro1mask` (control queue, 20 HaloTag-only WT cells, BR1–BR2) and `batches/20261116_HaloTag_Miro1mask_all`, pinned to v9. The configuration is `batches/20261104_HaloTag_only/configs/HaloTag_only.json` with the three Miro1 mask overrides (`broad.frob_thresh_division 4`, `mask_threshold.minimum_support 20`, `mask_cleanup.min_foreground_pixels 60`), applied with `prepare_dataset_batch.apply_method_sets`; its methods block is identical to `batches/20261113_Miro1/configs/Miro1.json`. Separate control root `_batch_pipeline/batches/20261116_HaloTag_Miro1mask`.
+- Read-only checks on the Mac: queue plan 20 pending / 0 complete; the original `20261104_HaloTag_only` queue still reports 20 / 20 complete; stage plan for WT_HaloTagOnly_BR2_T5 reuses detection, fit and c1_mean and recomputes broad and every later stage.
+- Original-mask results stay in place: per-cell cache entries (different hashes) and `Xinran_TRAK1_TRAK2_negativeWT/analysis_results/modular_summary_412690e476577f5c`. The un-versioned figure folders (`Analysis_Figures_Cell_Metrics`, `Analysis_Figures_Intra`, 128 files) were copied beforehand to `Xinran_TRAK1_TRAK2_negativeWT/_old_mask_figures_v8_backup_20261116`.
+- Drive-root launchers `*_HALOTAG_MIRO1MASK_WINDOWS.cmd` and `READ_ME_HALOTAG_MIRO1MASK_WINDOWS.txt`.
+
 ## 2026-11-13 — Miro1 mitochondrial mask parameters; Miro1 queue re-prepared (release 20261113T_pending_and_Halo_controls_v9_mask_params)
 
 Scientific change for Miro1 only. TRAK1, TRAK2 and HaloTag-only methods, parameters, cache identities and batches are unchanged (their manifests stay pinned to v8).

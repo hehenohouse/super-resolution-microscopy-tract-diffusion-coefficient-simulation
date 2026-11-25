@@ -133,6 +133,22 @@ class ExtensionControlTests(unittest.TestCase):
             backend.manifest={'datasets':[{'molecule':'TRAK1','config_relative':'config.json','total_cells':5,'new_sample_ids':['BR1']} ]}
             backend.api=types.SimpleNamespace(load_config=lambda p:{},discover_samples=lambda c:all_samples)
             with self.assertRaisesRegex(ValueError,'Old BR1-3'):backend.load_datasets()
+    def _full_backend(self,root,ids,**extra):
+        all_samples=[types.SimpleNamespace(sample_id='BR'+str(i),metadata={'BR':'BR'+str(i)}) for i in range(1,6)]
+        backend=runner.SharedBackend.__new__(runner.SharedBackend);backend.common=root
+        backend.manifest=dict(dict(queue_scope='all_configured_cells',existing_cells=0,method_overrides=[{'stage':'mask_threshold','parameter':'minimum_support','value':20}],
+            datasets=[{'molecule':'TRAK1','config_relative':'config.json','total_cells':5,'old_cells':0,'new_sample_ids':ids}]),**extra)
+        backend.api=types.SimpleNamespace(load_config=lambda p:{},discover_samples=lambda c:all_samples)
+        return backend
+    def test_full_rerun_queues_old_replicas_only_when_every_cell_and_overrides_are_declared(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);ids=['BR'+str(i) for i in range(1,6)]
+            values=self._full_backend(root,ids).load_datasets()
+            self.assertEqual([s.sample_id for s in values[0]['new_samples']],ids)
+            with self.assertRaisesRegex(ValueError,'exactly once'):self._full_backend(root,ids[:4]).load_datasets()
+            with self.assertRaisesRegex(ValueError,'exactly once'):self._full_backend(root,ids+['BR1']).load_datasets()
+            with self.assertRaisesRegex(ValueError,'exactly once'):self._full_backend(root,ids,existing_cells=3).load_datasets()
+            with self.assertRaisesRegex(ValueError,'method_overrides'):self._full_backend(root,ids,method_overrides=[]).load_datasets()
     def test_not_ready_manifest_cannot_start_and_installer_preserves_ordinary_launcher(self):
         with tempfile.TemporaryDirectory() as td:
             volume=Path(td);common=volume/'_TRAK_pipeline';batch=common/'batches/20261102_BR4_BR5';batch.mkdir(parents=True)
@@ -147,5 +163,39 @@ class ExtensionControlTests(unittest.TestCase):
             self.assertIn('replica_extension_control.ps1',text);self.assertIn('-Action "start"',text)
             self.assertNotIn('SETUP_WINDOWS',text)
             self.assertTrue((batch/'START_NEW_REPLICAS_WINDOWS.cmd').is_file())
+
+class CompletionOutputsTests(unittest.TestCase):
+    """SharedBackend.completion_outputs_valid on synthetic files; no scientific code runs."""
+    def setUp(self):
+        from trak_pipeline.cache import portable_path
+        self.tmp=tempfile.TemporaryDirectory(prefix='completion_',dir=ROOT/'validation');base=Path(self.tmp.name)
+        self.data=base/'Xinran_P';self.cell=self.data/'WT/P_BR1/T1';self.legacy=self.cell/'analysis_results/batch_old'
+        (self.legacy/'data').mkdir(parents=True);self.saved=self.legacy/'data/all_detections.csv.gz';self.saved.write_bytes(b'old')
+        out=self.cell/'analysis_results/modular_cache/broad/b1';out.mkdir(parents=True);(out/'mask.npy').write_bytes(b'new')
+        (out/'artifact.json').write_text(json.dumps(dict(complete=True,artifact=dict(id='b1'),
+            descriptors=dict(mask=dict(type='file',location=portable_path(out/'mask.npy',self.data,base),fingerprint=dict(bytes=3))))))
+        control=base/'control';(control/'modular/state/cells/WT_P_BR1_T1').mkdir(parents=True)
+        self.config=dict(data_root=str(self.data),package_root=str(base),control_root=str(control))
+        windows='D:\\Xinran_P\\WT\\P_BR1\\T1\\analysis_results\\batch_old\\data\\all_detections.csv.gz'
+        self.report=dict(science_complete=True,publication_complete=True,artifacts=dict(
+            detection=dict(id='d1',files=dict(table=windows),metadata=dict(legacy_output='D:\\Xinran_P\\WT\\P_BR1\\T1\\analysis_results\\batch_old')),
+            broad=dict(id='b1',files={},metadata={})))
+        self.reportpath=control/'modular/state/cells/WT_P_BR1_T1/fam.json'
+        self.backend=object.__new__(runner.SharedBackend)
+        self.backend.family=lambda d:'fam'
+        self.backend.runner=types.SimpleNamespace(default_specs=lambda c:[types.SimpleNamespace(stage='detection'),types.SimpleNamespace(stage='broad')])
+        self.sample=types.SimpleNamespace(sample_id='WT_P_BR1_T1',directory=self.cell)
+    def tearDown(self):self.tmp.cleanup()
+    def valid(self):
+        self.reportpath.write_text(json.dumps(self.report))
+        return self.backend.completion_outputs_valid(dict(config=self.config),self.sample,{})
+    def test_legacy_adapted_stage_counts_when_its_saved_files_exist(self):
+        self.assertTrue(self.valid())
+    def test_missing_legacy_file_is_not_complete(self):
+        self.saved.unlink();self.assertFalse(self.valid())
+    def test_stage_without_legacy_metadata_still_needs_its_cache_marker(self):
+        self.report['artifacts']['detection']['metadata']={};self.assertFalse(self.valid())
+    def test_changed_new_output_size_is_not_complete(self):
+        (self.cell/'analysis_results/modular_cache/broad/b1/mask.npy').write_bytes(b'newer');self.assertFalse(self.valid())
 
 if __name__=='__main__':unittest.main()
