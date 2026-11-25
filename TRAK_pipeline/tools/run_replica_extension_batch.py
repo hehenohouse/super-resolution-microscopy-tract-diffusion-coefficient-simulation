@@ -81,11 +81,20 @@ class SharedBackend:
             config=self.api.load_config(self.common/record['config_relative'])
             samples=self.api.discover_samples(config);byid={s.sample_id:s for s in samples}
             if len(samples)!=record['total_cells'] or len(byid)!=len(samples):raise ValueError('Combined inventory size/identity differs for '+record['molecule'])
+            # Full rerun (e.g. changed mask parameters): every configured BR1-5 cell is queued exactly once
+            # and the manifest must declare the method overrides. Ordinary BR4/BR5 extensions are unchanged.
+            full=self.manifest.get('queue_scope')=='all_configured_cells'
+            if full:
+                ids=record['new_sample_ids']
+                if (self.manifest.get('existing_cells')!=0 or record.get('old_cells',0)!=0 or len(ids)!=len(set(ids))
+                        or set(ids)!=set(byid)):
+                    raise ValueError('A full rerun must queue every configured cell of '+record['molecule']+' exactly once')
+                if not self.manifest.get('method_overrides'):raise ValueError('A full rerun must declare its method_overrides')
             new=[]
             for sid in record['new_sample_ids']:
                 if sid not in byid:raise ValueError('Queued cell is outside the combined inventory: '+sid)
                 sample=byid[sid]
-                if sample.metadata.get('BR') not in ('BR4','BR5'):raise ValueError('Old BR1-3 cell cannot enter the extension queue: '+sid)
+                if not full and sample.metadata.get('BR') not in ('BR4','BR5'):raise ValueError('Old BR1-3 cell cannot enter the extension queue: '+sid)
                 new.append(sample)
             if {s.metadata.get('BR') for s in samples}!={'BR1','BR2','BR3','BR4','BR5'}:raise ValueError('Five explicit replicas are required')
             values.append(dict(record=record,config=config,all_samples=samples,new_samples=new,molecule=record['molecule']))
@@ -106,12 +115,18 @@ class SharedBackend:
         # Presence and recorded byte sizes only. No output hashing or pixel reads.
         try:
             from trak_pipeline.cache import resolve_portable
+            from trak_pipeline.config import portable_input
             config=d['config'];family=self.family(d)
             path=Path(config['control_root'])/'modular/state/cells'/s.sample_id/(family+'.json')
             report=read(path)
             if not report.get('science_complete') or not report.get('publication_complete'):return False
             for spec in self.runner.default_specs(config):
                 art=report['artifacts'][spec.stage]
+                if (art.get('metadata') or {}).get('legacy_output'):
+                    # Legacy-adapted stages (BR1-3 detection/fit/c1_mean in a full rerun) are read-only
+                    # saved files with no modular-cache marker; require each recorded file to be present.
+                    if not art.get('files') or not all(portable_input(f,config).exists() for f in art['files'].values()):return False
+                    continue
                 marker=s.directory/'analysis_results/modular_cache'/spec.stage/art['id']/'artifact.json'
                 committed=read(marker)
                 if not committed.get('complete') or committed['artifact']['id']!=art['id']:return False
@@ -194,6 +209,18 @@ def state_progress(state):
     state['updated_utc']=utc();return state
 
 
+SUMMARY_EVERY_CELLS_DEFAULT=10
+
+
+def summary_every_cells(environ=None):
+    """Completed cells per dataset between queue summary refreshes (TRAK_SUMMARY_EVERY_CELLS; 1 = after every cell).
+    Each refresh re-reads every completed cell of the dataset, so its cost grows with the dataset."""
+    value=(os.environ if environ is None else environ).get('TRAK_SUMMARY_EVERY_CELLS',SUMMARY_EVERY_CELLS_DEFAULT)
+    value=int(value)
+    if value<1:raise ValueError('TRAK_SUMMARY_EVERY_CELLS must be a positive integer')
+    return value
+
+
 def execute_queue(manifest,datasets,backend,batch,action='start',save=None):
     """Control-flow unit, injectable for synthetic tests; only explicit new IDs run."""
     require_first=bool(manifest.get('require_first_complete_cell',False))
@@ -236,11 +263,12 @@ def execute_queue(manifest,datasets,backend,batch,action='start',save=None):
             if isinstance(error,(KeyboardInterrupt,SystemExit)) or backend.infrastructure(error):raise
             failure=dict(molecule=d['molecule'],phase=phase,error=str(error),traceback=traceback.format_exc(),utc=utc())
             state['summary_failures'].append(failure);state.setdefault('summary_failure_history',[]).append(failure)
+    every=summary_every_cells();unsummarized={}
     try:
         for d in datasets:backend.validate(d)
         for d in datasets:
             if stop.exists():break
-            summarize(d,'startup')
+            summarize(d,'startup');unsummarized[d['molecule']]=0
             for sample in d['new_samples']:
                 if stop.exists():break
                 sid=sample.sample_id;stamp=None;previous=state['cells'].get(sid,{})
@@ -280,7 +308,15 @@ def execute_queue(manifest,datasets,backend,batch,action='start',save=None):
                     state.pop('first_cell_gate_failure',None)
                     persist(state)
                     print(sid+' | FIRST CELL COMPLETE: science and cell figures are saved; continuing the remaining queue automatically.',flush=True)
-                summarize(d,'after '+sid);persist(state)
+                unsummarized[d['molecule']]+=1
+                # The summary is refreshed every `every` completed cells, after the first-cell gate, when a stop was
+                # requested and after the dataset's last cell (below); deferred cells are only absent from the summary.
+                if verifying_first or stop.exists() or unsummarized[d['molecule']]>=every:
+                    summarize(d,'after '+sid);unsummarized[d['molecule']]=0
+                else:print(sid+' | summary deferred ('+str(unsummarized[d['molecule']])+' of '+str(every)+' cells since the last summary refresh)',flush=True)
+                persist(state)
+            if unsummarized.get(d['molecule']):
+                summarize(d,'after dataset cells');unsummarized[d['molecule']]=0;persist(state)
             if stop.exists():break
         if stop.exists():
             state.update(status='PROGRESS',stopped_after_cell=True,ended_utc=utc())
@@ -321,7 +357,8 @@ def main(argv=None):
                     complete=False
                     print(json.dumps(dict(molecule=d['molecule'],complete=False,error=str(error),scientific_upstream_calls=0),indent=2),flush=True)
             return 0 if complete else 1
-        print('BR4/BR5 extension: only '+str(manifest['new_cells'])+' new cells; '+str(manifest['existing_cells'])+' old cells are summary-only. Five-replica summaries include '+str(manifest['summary_cells'])+' cells.',flush=True)
+        if manifest.get('queue_scope')=='all_configured_cells':print('Full TRAK rerun: all '+str(manifest['new_cells'])+' configured BR1-5 cells are queued (method overrides declared in the manifest). Five-replica summaries include '+str(manifest['summary_cells'])+' cells.',flush=True)
+        else:print('BR4/BR5 extension: only '+str(manifest['new_cells'])+' new cells; '+str(manifest['existing_cells'])+' old cells are summary-only. Five-replica summaries include '+str(manifest['summary_cells'])+' cells.',flush=True)
         state=execute_queue(manifest,datasets,backend,batch,args.action)
         print(json.dumps({k:state.get(k) for k in ('batch_id','status','completed_new_cells','failed_new_cells','remaining_new_cells','old_cells_excluded_from_execution')},indent=2),flush=True)
         return 0 if state['status']=='COMPLETE' or state.get('stopped_after_cell') else 1

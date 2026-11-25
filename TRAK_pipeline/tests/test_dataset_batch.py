@@ -153,6 +153,65 @@ class PrepareTests(Fixture):
         extra = self.make_cell(self.common / 'Other', 'WT', 'x_BR1', '101625_WT_Miro1_T1f'); (extra / 'second.roi').write_bytes(b'x')
         with self.assertRaises(ValueError): prepare.collect(self.common / 'Other', 'Miro1', ['WT'], ['BR1'], lambda p: header())
 
+    def make_flat_cell(self, root, br_folder, cell_folder):
+        d = root / br_folder / cell_folder; d.mkdir(parents=True)
+        for name in ('C1-x.tiff', 'C2-x.tiff', 't1.roi'): (d / name).write_bytes(b'x')
+        return d
+
+    def test_flat_layout_YYYYMMDD_dates_and_recorded_exclusions(self):
+        root = self.common / 'Xinran_New'
+        self.make_flat_cell(root, '20260423_TDK_TRAK1OE_TRAK2_BR1', '20260423_TDK_650TK2_TK1fgOE_T1f')
+        self.make_flat_cell(root, '20260423_TDK_TRAK1OE_TRAK2_BR1', '20260423_TDK_650TK2_TK1fgOE_T4f')
+        self.make_flat_cell(root, '20260528_TDK_TRAK1OE_TRAK2_BR2', '20260528_TDK_TK1OE_T1f')
+        read = []
+        def reader(p):
+            read.append(p.parent.name)
+            if p.parent.name.endswith('_T4f'): raise ValueError('New TIFF acquisition differs from 2500x684x428')
+            return header()
+        rows, counts, audit, paths = prepare.collect(root, 'P-OE', ['TDK'], ['BR1', 'BR2'], reader, flat=True,
+                                                     exclusions={'TDK_P-OE_BR1_T4': '1000 frames, not 2500'})
+        self.assertEqual([r['sample_id'] for r in rows], ['TDK_P-OE_BR1_T1', 'TDK_P-OE_BR2_T1'])
+        self.assertEqual([r['acquisition_date'] for r in rows], ['2026-04-23', '2026-05-28'])
+        self.assertEqual(paths['TDK', 'BR2'], '20260528_TDK_TRAK1OE_TRAK2_BR2')
+        self.assertNotIn('20260423_TDK_650TK2_TK1fgOE_T4f', read)
+        excluded = [a for a in audit if 'excluded_reason' in a]
+        self.assertEqual([(a['sample_id'], a['excluded_reason']) for a in excluded], [('TDK_P-OE_BR1_T4', '1000 frames, not 2500')])
+        self.assertEqual(counts['TDK', 'BR1'], 1)
+        with self.assertRaisesRegex(ValueError, 'differs'):
+            prepare.collect(root, 'P-OE', ['TDK'], ['BR1', 'BR2'], reader, flat=True)
+        with self.assertRaisesRegex(ValueError, 'not found'):
+            prepare.collect(root, 'P-OE', ['TDK'], ['BR1', 'BR2'], lambda p: header(), flat=True, exclusions={'TDK_P-OE_BR1_T9': 'x'})
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            prepare.collect(root, 'P-OE', ['WT', 'TDK'], ['BR1', 'BR2'], lambda p: header(), flat=True)
+        with self.assertRaises(ValueError): prepare.parse_exclusions(['TDK_P-OE_BR1_T4'])
+
+    def test_acquisition_date_prefixes_are_explicit(self):
+        self.assertEqual(prepare.acquisition_date('101625_WT_Miro1_T1f'), '2025-10-16')
+        self.assertEqual(prepare.acquisition_date('20260611_TDK_TK1OE_T1f'), '2026-06-11')
+        for bad in ('T1f', '2026061_x', '20261399_x'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError): prepare.acquisition_date(bad)
+
+    def test_condition_read_from_flat_replica_folder_names(self):
+        root = self.common / 'Xinran_M2'
+        self.make_flat_cell(root, '20251016_WT_M2_BR1', '101625_WT_M2_T1f')
+        self.make_flat_cell(root, '20251016_TDK_M2_BR1', '101625_TDKd3_M2_T1f')
+        self.make_flat_cell(root, '20251023_TDK_M2_BR2', '102325_TDKd3_M2_T2f')
+        self.make_flat_cell(root, '110625_WT_M2_BR2', '110625_WT_M2_T3f')
+        rows, counts, audit, paths = prepare.collect(root, 'M2', ['WT', 'TDK'], ['BR1', 'BR2'], lambda p: header(), condition_from_folder=True)
+        self.assertEqual([r['sample_id'] for r in rows], ['WT_M2_BR1_T1', 'WT_M2_BR2_T3', 'TDK_M2_BR1_T1', 'TDK_M2_BR2_T2'])
+        self.assertEqual([r['genotype'] for r in rows], ['WT', 'WT', 'TDK', 'TDK'])
+        self.assertEqual(paths['TDK', 'BR2'], '20251023_TDK_M2_BR2')
+        self.assertEqual(rows[1]['acquisition_date'], '2025-11-06')
+        with self.assertRaisesRegex(ValueError, 'Replicas for MDK'):   # declared condition without folders
+            prepare.collect(root, 'M2', ['WT', 'TDK', 'MDK'], ['BR1', 'BR2'], lambda p: header(), condition_from_folder=True)
+        with self.assertRaisesRegex(ValueError, 'exactly one of WT'):   # folder naming no declared condition
+            prepare.collect(root, 'M2', ['WT'], ['BR1', 'BR2'], lambda p: header(), condition_from_folder=True)
+        self.make_flat_cell(root, '20251030_WT_TDK_M2_BR3', '103025_x_T1f')
+        with self.assertRaisesRegex(ValueError, 'exactly one of'):      # ambiguous folder
+            prepare.collect(root, 'M2', ['WT', 'TDK'], ['BR1', 'BR2', 'BR3'], lambda p: header(), condition_from_folder=True)
+        with self.assertRaises(ValueError):
+            prepare.collect(root, 'M2', ['WT'], ['BR1'], lambda p: header(), flat=True, condition_from_folder=True)
+
     def test_build_refuses_existing_queue_names(self):
         for molecule in ('TRAK1', 'TRAK2', 'HaloTag_only'):
             with self.subTest(molecule=molecule):

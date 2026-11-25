@@ -4,6 +4,26 @@ One shared, frozen implementation serves TRAK1, TRAK2, Mac and Windows. Dataset 
 
 This package does not start a batch when installed. It uses the four existing Python environments and the existing Fiji/Java installation; it installs no dependencies and performs no Mac/Windows numerical or pixel replay.
 
+## Current queue: TDK control, Miro2, then the TRAK rerun — 2026-11-20
+
+`batches/20261120_TDKctrl_Miro2_then_TRAK_all` (release v19 since 2026-11-25, which refreshes the summaries every 10 cells instead of after every cell; v15 added a watchdog that terminates and retries a TrackMate JVM after 15 min without output; v16/v17 add the manual cells-in-ROI counts from `annotations/cell_counts.csv` to Cell Metrics, with per-cell values = ROI value ÷ ceil(cells in ROI), so a partial cell counts as one) runs, in order and without intervention:
+HaloTag-only in TDK cells (`Xinran_TDK_NegativeControl`, 10 cells, BR1), Miro2 (`Xinran_Miro2`, 100 cells,
+WT/TDK/MDK × BR1–BR3) and the rest of the full TRAK rerun. All use the Miro1 mask; each dataset is
+summarized alone. Start with `START_CTRL_MIRO2_TRAK_WINDOWS.cmd` (first time) or
+`RESUME_CTRL_MIRO2_TRAK_WINDOWS.cmd`; stop with `STOP_AFTER_CURRENT_CELL_CTRL_MIRO2_TRAK_WINDOWS.cmd`
+(or Ctrl+C). See `READ_ME_CTRL_MIRO2_TRAK_WINDOWS.txt`. Older launchers are in `_old_launchers_20261118/`.
+
+## TRAK2 with TRAK1 overexpression (TRAK2-TRAK1OE) — 2026-11-18
+
+TDK cells overexpressing TRAK1, imaging TRAK2 (`Xinran_TRAK2_inTRAK1OE`, 42 cells, BR1–BR3, Miro1 mask;
+`batches/20261118_TRAK2-TRAK1OE_all`, release v13). Its own dataset and summary, never pooled with TRAK2.
+Finished 42/42 on 2026-11-19 (first part of `batches/20261118_TRAK2-TRAK1OE_then_TRAK_all`, now superseded).
+
+## Full TRAK rerun with the Miro1 mask — 2026-11-16
+
+All 367 TRAK1/TRAK2 cells are rerun with the Miro1 mask (`batches/20261116_TRAK_Miro1mask_all`,
+release v14 since 2026-11-20; v10 could not summarize recomputed BR1–BR3 cells or recognize them as complete on resume). It now runs as the last queue of `*_CTRL_MIRO2_TRAK_WINDOWS.cmd` (see above); 125/367 done on 2026-11-20. Original-mask results are kept. See `CHANGELOG.md`.
+
 ## Miro1 mask parameters — 2026-11-13
 
 Miro1 uses its own mitochondrial-mask parameters (TRAK1, TRAK2 and HaloTag-only are unchanged): Nellie Hessian gate threshold ÷ 4 (`broad.frob_thresh_division`, default 2), support ≥ 20 of 50 frames (`mask_threshold.minimum_support`, default 10) and removal of mask pieces < 60 px (`mask_cleanup.min_foreground_pixels`, default 32). The queue was prepared with

@@ -82,15 +82,55 @@ def replica_of(directory, replicas):
     return match.group(1)
 
 
-def collect(root, molecule, conditions, replicas, metadata_reader=None):
+def acquisition_date(name):
+    """Cell folder date prefix: YYYYMMDD_ (e.g. 20260423_) or MMDDYY_ (e.g. 101625_). Nothing else is guessed."""
+    if re.match(r'^\d{8}_', name):return datetime.strptime(name[:8], '%Y%m%d').date().isoformat()
+    if re.match(r'^\d{6}_', name):return datetime.strptime(name[:6], '%m%d%y').date().isoformat()
+    raise ValueError('Cell folder must start with YYYYMMDD_ or MMDDYY_: ' + name)
+
+
+def parse_exclusions(items):
+    """'SAMPLE_ID=reason' strings -> {sample_id: reason}; each excluded cell stays recorded, never silently dropped."""
+    result = {}
+    for item in items or ():
+        sid, sep, reason = item.partition('=')
+        if not sep or not sid.strip() or not reason.strip():raise ValueError('--exclude-cell requires SAMPLE_ID=reason: ' + item)
+        if sid in result:raise ValueError('Duplicate --exclude-cell for ' + sid)
+        result[sid] = reason.strip()
+    return result
+
+
+def folder_conditions(root, conditions):
+    """Flat layout with the condition in each BR folder name (e.g. 20251016_TDK_Miro2_BR1):
+    every folder must carry exactly one declared condition as a whole '_'-separated token."""
+    result = {}
+    for br_dir in br45.visible_entries(root, directories=True):
+        found = [c for c in conditions if c in br_dir.name.split('_')]
+        if len(found) != 1:
+            raise ValueError('Replica folder must name exactly one of ' + '/'.join(conditions) + ': ' + str(br_dir))
+        result[br_dir] = found[0]
+    return result
+
+
+def collect(root, molecule, conditions, replicas, metadata_reader=None, flat=False, exclusions=None, condition_from_folder=False):
+    """flat=True: BR folders sit directly in the dataset folder and the single declared condition labels every cell.
+    condition_from_folder=True: BR folders sit directly in the dataset folder and each names its condition.
+    exclusions: {sample_id: reason}; those cells are recorded in the audit (no header check) and not queued."""
     metadata_reader = metadata_reader or br45.tiff_metadata
+    exclusions = dict(exclusions or {}); found_excluded = set()
     rows = []; counts = Counter(); audits = []; replica_paths = {}
+    if flat and condition_from_folder:
+        raise ValueError('Choose either --flat or --condition-from-folder')
+    if flat and len(conditions) != 1:
+        raise ValueError('A flat dataset folder (no condition subfolders) needs exactly one declared condition')
+    by_folder = folder_conditions(root, conditions) if condition_from_folder else None
     for condition in conditions:
-        folder = root / condition
+        folder = root if (flat or condition_from_folder) else root / condition
         if not folder.is_dir():
             raise FileNotFoundError('Condition directory is missing: ' + str(folder))
         seen = set()
-        for br_dir in br45.visible_entries(folder, directories=True):
+        br_dirs = [d for d, c in by_folder.items() if c == condition] if condition_from_folder else br45.visible_entries(folder, directories=True)
+        for br_dir in br_dirs:
             br = replica_of(br_dir, replicas)
             if br in seen:
                 raise ValueError('Multiple physical folders map to the same condition/BR: ' + str(br_dir))
@@ -99,11 +139,18 @@ def collect(root, molecule, conditions, replicas, metadata_reader=None):
                 if directory.name in ('analysis_results', 'test') or directory.name.startswith('Analysis_Figures'):
                     continue
                 cell = br45.cell_name(directory); c1, c2, roi = br45.unique_inputs(directory)
+                acquired = acquisition_date(directory.name)
+                sid = '_'.join([condition, molecule, br, cell]); rel = directory.relative_to(root).as_posix()
+                if sid in exclusions:
+                    found_excluded.add(sid)
+                    audits.append(dict(sample_id=sid, source_directory_relative=rel, original_cell_directory_name=directory.name,
+                        parent_replica_directory=br_dir.name, excluded_reason=exclusions[sid], acquisition_date=acquired,
+                        files=[dict(relative_path=p.relative_to(root).as_posix(), bytes=p.stat().st_size, mtime_ns=p.stat().st_mtime_ns)
+                               for p in (c1, c2, roi)]))
+                    continue
                 headers = {key: metadata_reader(path) for key, path in [('C1', c1), ('C2', c2)]}
                 if headers['C1']['shape'] != headers['C2']['shape']:
                     raise ValueError('C1/C2 declared grids differ: ' + str(directory))
-                acquired = datetime.strptime(directory.name[:6], '%m%d%y').date().isoformat()
-                sid = '_'.join([condition, molecule, br, cell]); rel = directory.relative_to(root).as_posix()
                 rows.append(dict(sample_id=sid, sample_name=' '.join([condition, molecule, br, 'cell', cell]),
                     genotype=condition, BR=br, cell=cell, molecule=molecule, acquisition_date=acquired,
                     source_directory=rel, source_directory_relative=rel,
@@ -118,6 +165,8 @@ def collect(root, molecule, conditions, replicas, metadata_reader=None):
                     TIFF_metadata=headers))
         if seen != set(replicas):
             raise ValueError('Replicas for ' + condition + ' are ' + str(sorted(seen)) + ', expected ' + str(list(replicas)))
+    if set(exclusions) - found_excluded:
+        raise ValueError('Excluded cells not found in the dataset: ' + ', '.join(sorted(set(exclusions) - found_excluded)))
     rows.sort(key=lambda r: (list(conditions).index(r['genotype']), br45.natural(r['BR']), br45.natural(r['cell'])))
     ids = [r['sample_id'] for r in rows]
     if len(set(ids)) != len(ids):
@@ -126,7 +175,7 @@ def collect(root, molecule, conditions, replicas, metadata_reader=None):
 
 
 def build(common_root, molecule, dataset_dir, conditions, replicas, batch_id, release_relative=None,
-          expected_cells=None, metadata_reader=None, method_sets=()):
+          expected_cells=None, metadata_reader=None, method_sets=(), flat=False, exclusions=None, condition_from_folder=False):
     for label, value in (('molecule', molecule), ('dataset directory', dataset_dir), ('batch ID', batch_id)):
         if not re.fullmatch(NAME if label != 'batch ID' else r'[A-Za-z0-9][A-Za-z0-9_.-]{0,120}', value):
             raise ValueError('Invalid ' + label + ': ' + value)
@@ -143,7 +192,9 @@ def build(common_root, molecule, dataset_dir, conditions, replicas, batch_id, re
     if not root.is_dir() or root.parent != common.parent:
         raise ValueError('Dataset directory must sit next to _TRAK_pipeline on the same drive: ' + str(root))
     template_path = common / TEMPLATE_RELATIVE; template = br45.read(template_path)
-    rows, counts, audit, replica_paths = collect(root, molecule, conditions, replicas, metadata_reader)
+    rows, counts, audit, replica_paths = collect(root, molecule, conditions, replicas, metadata_reader, flat, exclusions, condition_from_folder)
+    excluded = [dict(sample_id=a['sample_id'], source_directory_relative=a['source_directory_relative'], reason=a['excluded_reason'])
+                for a in audit if 'excluded_reason' in a]
     if expected_cells is not None and len(rows) != expected_cells:
         raise ValueError('Found ' + str(len(rows)) + ' cells, expected ' + str(expected_cells))
     config_dir = batch / 'configs'
@@ -170,7 +221,10 @@ def build(common_root, molecule, dataset_dir, conditions, replicas, batch_id, re
         template_config_relative=TEMPLATE_RELATIVE,
         template_config_sha256=hashlib.sha256(template_path.read_bytes()).hexdigest(),
         upstream_methods_digest=br45.digest(template['methods']), upstream_parameters_unchanged=not overrides,
-        method_overrides=overrides, methods_digest=br45.digest(config['methods']))
+        method_overrides=overrides, methods_digest=br45.digest(config['methods']),
+        folder_layout=('flat: BR folders directly in the dataset folder; declared condition ' + conditions[0] if flat else
+                       'flat: BR folders directly in the dataset folder; condition read from each BR folder name' if condition_from_folder else 'condition/BR/cell'),
+        excluded_cells=excluded)
     manifest = dict(schema_version=1, batch_id=batch_id, common_root_relative='../..', path_basis='common_root',
         release_relative=release_relative, ready_for_execution=bool(release_relative),
         created_utc=datetime.now(timezone.utc).isoformat(), experiment_type='target_dataset',
@@ -184,7 +238,7 @@ def build(common_root, molecule, dataset_dir, conditions, replicas, batch_id, re
             if not overrides else 'Production methods except the declared mask parameters (' + '; '.join(o['stage'] + '.' + o['parameter'] + ' ' + json.dumps(o['template_value']) + ' -> ' + json.dumps(o['value']) for o in overrides)
             + '): TrackMate LoG, annular-background Gaussian fit, raw C1 Nellie, support counts, cleanup, 1-SE ellipse assignment, TARDIS tau1 and summaries'),
         metadata_check_scope=str(2 * len(rows)) + ' TIFF first-IFD headers and explicit ImageJ fields; unique C1/C2/ROI per cell. No pixels, full hashes, page-chain enumeration or science calls.',
-        new_cells_started=0, scientific_stage_calls=0)
+        excluded_cells=excluded, new_cells_started=0, scientific_stage_calls=0)
     return manifest, (config_path, config), dict(dataset=molecule, data_root=root.name, cells=audit)
 
 
@@ -214,6 +268,10 @@ def write_prepared(common, manifest, prepared_config, audit):
                + '. Methods are copied unchanged except these declared mask parameters: '
                + '; '.join(o['stage'] + '.' + o['parameter'] + ' ' + json.dumps(o['template_value']) + ' -> ' + json.dumps(o['value']) for o in d['method_overrides']) + '.'),
               'This dataset is summarized on its own; it is never pooled with TRAK1, TRAK2 or HaloTag-only.', '']
+    if d.get('excluded_cells'):
+        lines += ['Excluded (recorded, not queued, not summarized; inputs untouched):', '']
+        lines += ['- ' + e['sample_id'] + ' (' + e['source_directory_relative'] + '): ' + e['reason'] for e in d['excluded_cells']]
+        lines += ['']
     (batch / 'INPUT_INVENTORY.md').write_text('\n'.join(lines), encoding='utf-8')
 
 
@@ -229,11 +287,17 @@ def main(argv=None):
     parser.add_argument('--release-relative', help='Frozen release relative to common root; otherwise the batch is not execution-ready')
     parser.add_argument('--method-set', action='append', default=[], metavar='STAGE.PARAMETER=JSON',
                         help='Explicit mitochondrial-mask parameter, e.g. broad.frob_thresh_division=4, mask_threshold.minimum_support=20, mask_cleanup.min_foreground_pixels=60')
+    parser.add_argument('--flat', action='store_true', help='BR folders sit directly in the dataset folder; requires exactly one --conditions label')
+    parser.add_argument('--condition-from-folder', action='store_true',
+                        help='BR folders sit directly in the dataset folder and each names one declared condition, e.g. 20251016_TDK_Miro2_BR1')
+    parser.add_argument('--exclude-cell', action='append', default=[], metavar='SAMPLE_ID=REASON',
+                        help='Record a cell as excluded (not queued or summarized), e.g. a different frame count')
     parser.add_argument('--write', action='store_true', help='Write only the new batch folder; never source data or other batches')
     args = parser.parse_args(argv)
     manifest, prepared, audit = build(args.common_root, args.molecule, args.dataset_dir, args.conditions, args.replicas,
                                       args.batch_id, args.release_relative, args.expected_cells,
-                                      method_sets=parse_method_sets(args.method_set))
+                                      method_sets=parse_method_sets(args.method_set), flat=args.flat,
+                                      exclusions=parse_exclusions(args.exclude_cell), condition_from_folder=args.condition_from_folder)
     if args.write:
         write_prepared(args.common_root, manifest, prepared, audit)
     d = manifest['datasets'][0]
@@ -241,6 +305,8 @@ def main(argv=None):
                                                'require_first_complete_cell', 'scientific_stage_calls')}, indent=2))
     for row in d['counts_by_condition_replica']:
         print(row['condition'], row['BR'], row['cells'], 'cells')
+    for e in d['excluded_cells']:
+        print('excluded:', e['sample_id'], '-', e['reason'])
     for o in d['method_overrides']:
         print('method override:', o['stage'] + '.' + o['parameter'], o['template_value'], '->', o['value'])
     print('written' if args.write else 'dry run: nothing written', flush=True)

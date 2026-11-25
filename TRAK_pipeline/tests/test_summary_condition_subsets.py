@@ -164,5 +164,23 @@ class ConditionSubsetSummaryTests(unittest.TestCase):
                 self.assertIn('Cells' if row['level']!='cell' else 'Cell Summary',xml)
         self.assertFalse(any('TDK' in p.parts or 'MDK' in p.parts for p in self.root.rglob('*')))
 
+    def test_single_declared_replica_dataset_completes(self):
+        """A control dataset with one BR (e.g. HaloTag-only in TDK): complete summary, BR SD unavailable, figures written."""
+        config,rows,samples,artifacts=self.fixture()
+        rows=[r for r in rows if r['BR']=='BR1']
+        config=dict(config,replicas=['BR1'],_expected_samples=rows)
+        result=summaries.summarize(config,samples,artifacts)
+        nodes=json.loads(Path(result['manifest']).read_text())['nodes']
+        self.assertEqual({n['key'] for n in nodes if n['level']=='BR'},{'WT/BR1'})
+        condition=next(n for n in nodes if n['level']=='condition');data=self.root/condition['data']
+        node=json.loads((data/'intra_node.json').read_text())
+        self.assertEqual(node['progress']['expected'],2);self.assertEqual(node['progress']['completed'],2)
+        self.assertEqual(node['progress']['expected_BRs'],1);self.assertEqual(node['progress']['valid_BRs'],1)
+        self.assertNotEqual(node['progress']['status'],'PROGRESS')
+        scalar=pd.read_csv(data/'summary_statistics.csv').set_index('metric')
+        self.assertEqual(scalar.loc['on_percentage','mean'],60.);self.assertTrue(np.isnan(scalar.loc['on_percentage','sd']))
+        summaries.refresh(config,result['manifest'])
+        self.assertTrue((self.root/'NegativeControl/WT/Analysis_Figures_Intra/Intra_area_full.png').is_file())
+
 
 if __name__=='__main__':unittest.main()

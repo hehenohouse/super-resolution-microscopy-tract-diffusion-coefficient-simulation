@@ -17,6 +17,13 @@ from .distances import dump,load_json,GROUPS
 
 METRICS=('on_percentage','first_mask_ROI_area_um2','mean_ROI_area_um2')
 COUNT_FIELDS=('On','Not_on','unknown','QC_excluded','selected','ROI_candidates')
+# Manual cells-in-ROI counts (an annotation, not science). Per-cell values = ROI value / cells_for_per_cell,
+# where a partial cell counts as one (cells_for_per_cell = ceil(cells_in_ROI): 0.5 -> 1, 1.5 -> 2). A cell cut by
+# the ROI edge usually keeps most of its perinuclear mitochondria inside, so dividing by 0.5 would double it.
+CELL_COUNT_METRICS=('first_mask_ROI_area_per_cell_um2','mean_ROI_area_per_cell_um2','localizations_per_cell')
+CELL_COUNT_FIELDS=('cells_in_ROI','cells_for_per_cell',*CELL_COUNT_METRICS)
+SUMMARY_METRICS=METRICS+CELL_COUNT_METRICS
+CELL_COUNTS_ENV='TRAK_CELL_COUNTS'
 VIEWS=('signed','area','peak')
 CONDITIONS=('WT','TDK','MDK')
 
@@ -51,6 +58,47 @@ def _plain(value):
 def _stats(values,ncells=None,nbr=0):
     a=np.asarray([v for v in values if v is not None and np.isfinite(v)],float);n=len(a)
     return dict(n=n,mean=float(a.mean()) if n else None,sd=float(a.std(ddof=1)) if n>1 else None,sem=float(a.std(ddof=1)/np.sqrt(n)) if n>1 else None,n_cells_valid=n if ncells is None else ncells,n_BRs_valid=nbr)
+
+
+def _cell_counts_path():
+    """Shared manual count table: TRAK_CELL_COUNTS, else <common root>/annotations/cell_counts.csv."""
+    override=os.environ.get(CELL_COUNTS_ENV)
+    if override:return Path(override)
+    common=os.environ.get('TRAK_COMMON_ROOT')
+    if common:return Path(common)/'annotations'/'cell_counts.csv'
+    release=Path(__file__).resolve().parents[3]
+    base=release.parent.parent if release.parent.name=='releases' else release
+    return base/'annotations'/'cell_counts.csv'
+
+
+def _load_cell_counts(path=None):
+    """sample_id -> cells_in_ROI (positive; 0.5 = about half a cell inside the ROI). Absent file or blank value = unavailable."""
+    path=Path(path) if path else _cell_counts_path()
+    if not path.is_file():return {}
+    rows=pd.read_csv(path,dtype={'sample_id':str},keep_default_na=True)
+    if not {'sample_id','cells_in_ROI'}<=set(rows):raise ValueError('Cell count table needs sample_id and cells_in_ROI columns: '+str(path))
+    duplicated=rows.sample_id[rows.sample_id.duplicated()].tolist()
+    if duplicated:raise ValueError('Duplicate sample_id in cell count table: '+', '.join(duplicated[:5]))
+    counts={}
+    for sample_id,value in zip(rows.sample_id,rows.cells_in_ROI):
+        if pd.isna(value) or str(value).strip()=='':continue
+        value=float(value)
+        if not np.isfinite(value) or value<=0:raise ValueError('cells_in_ROI must be a positive number: '+str(sample_id))
+        counts[str(sample_id)]=value
+    return counts
+
+
+def _attach_cell_counts(record,counts):
+    """Adds cells_in_ROI, the divisor (partial cells count as one) and per-cell values; ROI-level metrics are never changed."""
+    import math
+    n=counts.get(record['sample_id']);record['cells_in_ROI']=n
+    divisor=int(math.ceil(n-1e-9)) if n else None;record['cells_for_per_cell']=divisor
+    def per_cell(value):
+        return float(value)/divisor if divisor and value is not None and np.isfinite(float(value)) else None
+    record['first_mask_ROI_area_per_cell_um2']=per_cell(record.get('first_mask_ROI_area_um2'))
+    record['mean_ROI_area_per_cell_um2']=per_cell(record.get('mean_ROI_area_um2'))
+    record['localizations_per_cell']=per_cell(record.get('total_localizations'))
+    return record
 
 
 def _samples(samples,artifacts_by_sample):
@@ -169,9 +217,18 @@ def _normalized_saved_counts(value, sample_id, source):
     return result
 
 
+def _legacy_records_apply(sample,artifacts,stages):
+    """Old saved outputs describe the old saved mask and assignment. They stay a
+    source/cross-check only while those stages are absent or legacy-adapted; a
+    recomputed stage (e.g. a full rerun with new mask parameters) supersedes them."""
+    if not sample.legacy_output:return False
+    present=[artifacts[s] for s in stages if artifacts.get(s) is not None]
+    return all(a.metadata.get('legacy_output') for a in present)
+
+
 def _saved_block_area_metrics(sample,artifacts,config):
     paths=[]
-    if sample.legacy_output:paths.append(Path(sample.legacy_output)/'masks/per_block_statistics.csv')
+    if _legacy_records_apply(sample,artifacts,('mask_roi','mask_cleanup')):paths.append(Path(sample.legacy_output)/'masks/per_block_statistics.csv')
     for name in ('mask_roi','mask_cleanup'):
         artifact=artifacts.get(name)
         if artifact and artifact.files.get('statistics'):paths.append(Path(artifact.files['statistics']))
@@ -201,7 +258,8 @@ def _load_scalar_metrics(sample,artifacts,config):
 
     Counts and mask areas are separate products. A legacy statistics adapter
     carries flat counts/areas, whereas modern statistics uses metrics.counts.
-    Classification records remain authoritative cross-checks in either layout.
+    Classification records remain authoritative cross-checks in either layout;
+    an old saved record is skipped only when the assignment was recomputed.
     """
     stat=artifacts.get('statistics');meta={}
     if stat and stat.files.get('metadata') and Path(stat.files['metadata']).is_file():meta=load_json(stat.files['metadata'])
@@ -216,7 +274,7 @@ def _load_scalar_metrics(sample,artifacts,config):
         candidates.append(('assignment artifact metadata',assignment.metadata['counts']))
     paths=[]
     if assignment and assignment.files.get('summary'):paths.append(Path(assignment.files['summary']))
-    if sample.legacy_output:paths.append(Path(sample.legacy_output)/'classification_summary.json')
+    if _legacy_records_apply(sample,artifacts,('assignment',)):paths.append(Path(sample.legacy_output)/'classification_summary.json')
     seen=set()
     for path in paths:
         if path.is_file() and str(path.resolve()) not in seen:
@@ -325,18 +383,18 @@ def _metric_nodes(records,root,conditions=None,inventory=None,condition_director
         brgroups=dict(sorted(brgroups.items(),key=lambda item:(conditions.index(item[0][0]),list(brgroups).index(item[0]))))
         cgroups={condition:cgroups[condition] for condition in conditions if condition in cgroups}
     brstats={};conditionstats={}
-    for key,rows in brgroups.items():brstats[key]={metric:_stats([r[metric] for r in rows],nbr=1 if rows else 0) for metric in METRICS}
+    for key,rows in brgroups.items():brstats[key]={metric:_stats([r.get(metric) for r in rows],nbr=1 if rows else 0) for metric in SUMMARY_METRICS}
     for condition,rows in cgroups.items():
-        children=[value for (c,_),value in brstats.items() if c==condition];conditionstats[condition]={metric:_stats([child[metric]['mean'] for child in children],ncells=sum(child[metric]['n_cells_valid'] for child in children),nbr=sum(child[metric]['n']>0 for child in children)) for metric in METRICS}
+        children=[value for (c,_),value in brstats.items() if c==condition];conditionstats[condition]={metric:_stats([child[metric]['mean'] for child in children],ncells=sum(child[metric]['n_cells_valid'] for child in children),nbr=sum(child[metric]['n']>0 for child in children)) for metric in SUMMARY_METRICS}
     for record in records:
-        nodes.append(dict(level='cell',key=record['sample_id'],directory=str(root/record['source_directory_relative']),records=[record],BR_records=[],summary_records=[dict(condition=record['genotype'],metric=metric,**_stats([record.get(metric)],nbr=1)) for metric in METRICS]))
+        nodes.append(dict(level='cell',key=record['sample_id'],directory=str(root/record['source_directory_relative']),records=[record],BR_records=[],summary_records=[dict(condition=record['genotype'],metric=metric,**_stats([record.get(metric)],nbr=1)) for metric in SUMMARY_METRICS]))
     for key,rows in brgroups.items():
         source=next(row for row in expected if (row['genotype'],row['BR'])==key)
-        nodes.append(dict(level='BR',key='/'.join(key),directory=str((root/source['source_directory_relative']).parent),records=rows,BR_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS],summary_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in METRICS]))
+        nodes.append(dict(level='BR',key='/'.join(key),directory=str((root/source['source_directory_relative']).parent),records=rows,BR_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in SUMMARY_METRICS],summary_records=[dict(condition=key[0],BR=key[1],**brstats[key][metric],metric=metric) for metric in SUMMARY_METRICS]))
     for condition,rows in cgroups.items():
         directory=(condition_directories or {}).get(condition,root/condition)
-        nodes.append(dict(level='condition',key=condition,directory=str(directory),records=rows,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() if c==condition for metric in METRICS],summary_records=[dict(condition=condition,metric=metric,**conditionstats[condition][metric]) for metric in METRICS]))
-    nodes.append(dict(level='comparison',key='_'.join(conditions or CONDITIONS),directory=str(root),records=records,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() for metric in METRICS],summary_records=[dict(condition=c,metric=metric,**values[metric]) for c,values in conditionstats.items() for metric in METRICS]))
+        nodes.append(dict(level='condition',key=condition,directory=str(directory),records=rows,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() if c==condition for metric in SUMMARY_METRICS],summary_records=[dict(condition=condition,metric=metric,**conditionstats[condition][metric]) for metric in SUMMARY_METRICS]))
+    nodes.append(dict(level='comparison',key='_'.join(conditions or CONDITIONS),directory=str(root),records=records,BR_records=[dict(condition=c,BR=br,metric=metric,**values[metric]) for (c,br),values in brstats.items() for metric in SUMMARY_METRICS],summary_records=[dict(condition=c,metric=metric,**values[metric]) for c,values in conditionstats.items() for metric in SUMMARY_METRICS]))
     if conditions is not None:
         for node in nodes:node['condition_order']=list(conditions)
     return nodes
@@ -356,7 +414,15 @@ def _reader_tables(node_record,root):
     return sheets
 
 
-def _summary_input_signature(config,entries,method_config,root):
+def _summary_code_digest():
+    """Code that defines the saved numeric records and reader workbook jobs. Part of the fast-path input
+    signature, so a change to it rewrites the summary instead of reusing records made by older code."""
+    h=hashlib.sha256()
+    for path in (Path(__file__),COMPAT/'reader_table_data.py',COMPAT/'localization_count_data.py'):h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _summary_input_signature(config,entries,method_config,root,cell_counts=None):
     """Immutable stage IDs suffice when both consumed scientific caches exist.
 
     Historical direct-file inputs without stage identities deliberately miss
@@ -371,6 +437,9 @@ def _summary_input_signature(config,entries,method_config,root):
     expected=[{key:row.get(key) for key in ('sample_id','genotype','condition','BR','replica','cell','molecule','source_directory_relative')} for row in _expected_inventory(config,[],root)]
     payload=dict(summary=method_config,scientific_definitions={key:value for key,value in config.get('methods',{}).items() if key not in ('presentation','c1_mean')},inputs=sorted(signatures,key=lambda x:x['identity']['sample_id']),expected=sorted(expected,key=lambda x:x.get('sample_id','')))
     if 'summary_failed_sample_ids' in config:payload['failed_sample_ids']=sorted(config['summary_failed_sample_ids'])
+    ids=sorted({s['identity']['sample_id'] for s in signatures}|{row.get('sample_id') for row in expected if row.get('sample_id')})
+    payload['cell_counts']={sample_id:(cell_counts or {}).get(sample_id) for sample_id in ids}
+    payload['summary_code_sha256']=_summary_code_digest()
     if config.get('condition_directories'):payload['output_condition_directories']={key:value.relative_to(root).as_posix() for key,value in _condition_directories(config,root).items()}
     return digest(_plain(payload))
 
@@ -384,11 +453,11 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
     method_config=_summary_parameters(config)
     science_paths();root=Path(config['data_root']).resolve();control=Path(config.get('control_root',root/'_batch_pipeline'));records=[];cells={};inventory=[];sources=[]
     entries=list(_samples(samples,artifacts_by_sample));manifestdir=Path(output_dir) if output_dir else control/'modular_summaries';manifestpath=manifestdir/'summary_manifest.json';previous=load_json(manifestpath) if manifestpath.is_file() else {}
-    input_signature=_summary_input_signature(config,entries,method_config,root)
+    cell_counts=_load_cell_counts();input_signature=_summary_input_signature(config,entries,method_config,root,cell_counts)
     if input_signature is not None and previous.get('input_signature')==input_signature and _summary_numeric_files_exist(previous,root):
         return dict(manifest=str(manifestpath),summary_id=previous['summary_id'],nodes=previous['nodes'],reused=True,scientific_statistics_computed=False,upstream_stages_run=[],new_cells_started=0)
     for sample,artifacts in entries:
-        record,cell=_load_cell(sample,artifacts,config);records.append(record);cells[sample.id]=cell;inventory.append(record);sources.append(dict(sample_id=sample.id,artifacts={k:v.id for k,v in artifacts.items() if k in ('statistics','decomposition','assignment','mask_roi')},scalar_digest=digest({key:record.get(key) for key in (*COUNT_FIELDS,*METRICS)}),curve_digest=cell['result_digest'],eligible=cell['eligible'],reasons=cell['reasons']))
+        record,cell=_load_cell(sample,artifacts,config);_attach_cell_counts(record,cell_counts);records.append(record);cells[sample.id]=cell;inventory.append(record);sources.append(dict(sample_id=sample.id,artifacts={k:v.id for k,v in artifacts.items() if k in ('statistics','decomposition','assignment','mask_roi')},scalar_digest=digest({key:record.get(key) for key in (*COUNT_FIELDS,*METRICS)}),curve_digest=cell['result_digest'],eligible=cell['eligible'],reasons=cell['reasons']))
     records.sort(key=lambda r:r['sample_id']);inventory.sort(key=lambda r:r['sample_id']);sources.sort(key=lambda r:r['sample_id'])
     inventory=_expected_inventory(config,inventory,root)
     methods={digest(cell['method_definition']) for cell in cells.values()}
@@ -410,7 +479,7 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
     for metricnode in metricnodes:
         directory=Path(metricnode['directory']);data=directory/'analysis_results'/('modular_summary_'+summaryid);data.mkdir(parents=True,exist_ok=True)
         matching=next((n for n in nodeobjects if n['key']==metricnode['key'] and n['level']==metricnode['level']),None)
-        numeric_records=[{key:record.get(key) for key in ('sample_id','genotype','BR','cell','molecule','acquisition_date',*COUNT_FIELDS,*METRICS)} for record in metricnode['records']]
+        numeric_records=[{key:record.get(key) for key in ('sample_id','genotype','BR','cell','molecule','acquisition_date',*COUNT_FIELDS,*METRICS,*CELL_COUNT_FIELDS)} for record in metricnode['records']]
         numeric_signature=digest(_plain(dict(records=numeric_records,summary=metricnode['summary_records'],BR=metricnode['BR_records'],intra={key:matching.get(key) for key in ('groups','members','exclusions','progress')} if matching else None)))
         prior=next((n for n in previous.get('nodes',[]) if n['level']==metricnode['level'] and n['key']==metricnode['key']),None)
         if previous.get('summary_id')==summaryid and prior and prior.get('numeric_signature')==numeric_signature and prior.get('numeric_files') and all((data/name).is_file() for name in prior.get('numeric_files',{})):
@@ -436,7 +505,7 @@ def summarize(config,samples,artifacts_by_sample=None,output_dir=None):
                         for i,value in enumerate(curve):rows.append(dict(group=group,normalization=view,series_id=sid,distance_mid_um=matching['x'][i],value=value,SD=part.get('sd')[i] if sid=='__mean__' and part.get('sd') is not None else None,SEM=part.get('sem')[i] if sid=='__mean__' and part.get('sem') is not None else None,n=part['n']))
             _save_csv(pd.DataFrame(rows),data/'intra_curves_long.csv.gz',compression='gzip')
             dump(data/'cohort_membership.json',dict(members=matching['members'],exclusions=matching['exclusions'],progress=matching['progress']))
-        numeric_records=[{key:record.get(key) for key in ('sample_id','genotype','BR','cell','molecule','acquisition_date',*COUNT_FIELDS,*METRICS)} for record in metricnode['records']]
+        numeric_records=[{key:record.get(key) for key in ('sample_id','genotype','BR','cell','molecule','acquisition_date',*COUNT_FIELDS,*METRICS,*CELL_COUNT_FIELDS)} for record in metricnode['records']]
         numeric_signature=digest(_plain(dict(records=numeric_records,summary=metricnode['summary_records'],BR=metricnode['BR_records'],intra={key:matching.get(key) for key in ('groups','members','exclusions','progress')} if matching else None)))
         numeric_files=[data/'metric_node.json',data/'reader_workbook_job.json']+sorted(data.glob('*.csv'))+sorted(data.glob('*.csv.gz'))+([data/'intra_node.json',data/'cohort_membership.json'] if matching else [])
         nodes.append(dict(level=metricnode['level'],key=metricnode['key'],directory=directory.relative_to(root).as_posix(),data=data.relative_to(root).as_posix(),intra=bool(matching),workbook_job=(data/'reader_workbook_job.json').relative_to(root).as_posix(),numeric_signature=numeric_signature,numeric_files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in numeric_files}))
